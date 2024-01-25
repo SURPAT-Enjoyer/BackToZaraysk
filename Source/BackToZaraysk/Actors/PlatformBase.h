@@ -11,8 +11,8 @@
 UENUM(BlueprintType)
 enum class EPlatformBehavior : uint8
 {
-	OnDemand = 0, //-платформа перемещается только при запросе
-	Loop //- платформа перемещается по циклу.
+	OnDemand = 0, 
+	Loop 
 };
 
 UCLASS()
@@ -26,6 +26,8 @@ public:
 
 	UFUNCTION(BlueprintCallable)
 	void PlatformTimelineUpdate(float Alpha);
+	//UFUNCTION(BlueprintCallable)
+	//void PlatformForvardReverseTrigger();
 	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
 		EPlatformBehavior PlatformBehavior = EPlatformBehavior::OnDemand;
@@ -34,15 +36,18 @@ protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
 
-	
 	//UPROPERTY(EditAnywhere, BlueprintReadOnly)
 	//	int test = 100;
 	FTimeline PlatformTimeline;
 
+	//UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient)
+	//	bool ForvardReverseFlag;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
 		UStaticMeshComponent* PlatformMesh;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient)
 		FVector StartLocation;
+	//UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient)
+	//	FVector CurrentLocation;
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, meta = (MakeEditWidget))
 		FVector EndLocation;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
