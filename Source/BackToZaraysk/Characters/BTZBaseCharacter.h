@@ -50,6 +50,7 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure)
 	FORCEINLINE float GetIKRightFootOffset() const { return IKRightFootOffset; }
 
+
 	//UPROPERTY(BlueprintReadOnly, Transient, DuplicateTransient, Category = MovementComponent)
 	//TObjectPtr<USceneComponent> UpdatedComponent;
 

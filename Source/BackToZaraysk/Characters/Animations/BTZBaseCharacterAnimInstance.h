@@ -52,6 +52,29 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Character animation")
 	float StrafeDirection = 0.0f;
 
+	// Climbing animation variables
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Climbing Animation")
+	bool bIsClimbing = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Climbing Animation")
+	bool bIsVaulting = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Climbing Animation")
+	bool bIsMantling = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Climbing Animation")
+	bool bIsLedgeClimbing = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Climbing Animation")
+	float ClimbingSpeed = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Climbing Animation")
+	float ClimbingHeight = 0.0f;
+
 private:
 	TWeakObjectPtr<class ABTZBaseCharacter> CachedBaseCharacter;
+	
+	// Timer for animation state reset
+	float ClimbingAnimationResetTimer = 0.0f;
+	bool bWasClimbing = false;
 };

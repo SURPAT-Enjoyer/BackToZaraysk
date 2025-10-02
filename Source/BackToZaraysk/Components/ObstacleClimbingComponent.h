@@ -129,6 +129,10 @@ protected:
     FVector TargetLocation;
     FVector StartLocation;
     float ClimbProgress = 0.0f;
+    
+    // Таймер для отложенного включения коллизий
+    float CollisionRestoreTimer = 0.0f;
+    bool bWaitingForCollisionRestore = false;
 
     // Внутренние методы
     void StartClimbAnimation(const FObstacleInfo& Obstacle);

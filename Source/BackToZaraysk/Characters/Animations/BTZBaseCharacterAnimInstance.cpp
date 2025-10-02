@@ -6,6 +6,7 @@
 #include "../PlayerCharacter.h"
 #include "../../Components/MovementComponents/BTZBaseCharMovementComponent.h"
 #include "../../Components/StrafeComponent.h"
+#include "../../Components/ObstacleClimbingComponent.h"
 
 void UBTZBaseCharacterAnimInstance::NativeBeginPlay()
 {
@@ -126,5 +127,141 @@ void UBTZBaseCharacterAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
         RightFootEffectorLocation = FVector::ZeroVector;
         LeftFootIKAlpha = FMath::FInterpTo(LeftFootIKAlpha, 0.0f, DeltaSeconds, 5.0f);
         RightFootIKAlpha = FMath::FInterpTo(RightFootIKAlpha, 0.0f, DeltaSeconds, 5.0f);
+    }
+
+    // Climbing animation synchronization
+    if (CachedBaseCharacter.IsValid())
+    {
+        // Try to get ObstacleClimbingComponent from base character
+        ABTZBaseCharacter* BaseCharacter = CachedBaseCharacter.Get();
+        if (BaseCharacter)
+        {
+            if (GEngine)
+            {
+                GEngine->AddOnScreenDebugMessage(-1, 0.0f, FColor::Orange, 
+                    TEXT("AnimInstance: BaseCharacter found"));
+            }
+            
+            // Cast to PlayerCharacter to access climbing component
+            if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(BaseCharacter))
+            {
+                if (GEngine)
+                {
+                    GEngine->AddOnScreenDebugMessage(-1, 0.0f, FColor::Orange, 
+                        TEXT("AnimInstance: PlayerCharacter cast SUCCESS"));
+                }
+                
+                if (PlayerCharacter->ObstacleClimbingComponent)
+                {
+                    if (GEngine)
+                    {
+                        GEngine->AddOnScreenDebugMessage(-1, 0.0f, FColor::Orange, 
+                            TEXT("AnimInstance: ObstacleClimbingComponent found"));
+                    }
+                    
+                    bIsClimbing = PlayerCharacter->ObstacleClimbingComponent->bIsClimbing;
+                
+                // Debug: show current climb type
+                if (GEngine)
+                {
+                    int32 ClimbTypeValue = (int32)PlayerCharacter->ObstacleClimbingComponent->CurrentClimbType;
+                    GEngine->AddOnScreenDebugMessage(-1, 0.0f, FColor::Yellow, 
+                        FString::Printf(TEXT("AnimInstance: CurrentClimbType = %d"), ClimbTypeValue));
+                }
+                
+                // Set specific climbing animation states based on climb type
+                switch (PlayerCharacter->ObstacleClimbingComponent->CurrentClimbType)
+                {
+                case EObstacleClimbType::Vault:
+                    bIsVaulting = true;
+                    bIsMantling = false;
+                    bIsLedgeClimbing = false;
+                    if (GEngine)
+                    {
+                        GEngine->AddOnScreenDebugMessage(-1, 0.0f, FColor::Cyan, 
+                            TEXT("AnimInstance: bIsVaulting = TRUE"));
+                    }
+                    break;
+                case EObstacleClimbType::Climb:
+                    bIsVaulting = false;
+                    bIsMantling = true;
+                    bIsLedgeClimbing = false;
+                    if (GEngine)
+                    {
+                        GEngine->AddOnScreenDebugMessage(-1, 0.0f, FColor::Cyan, 
+                            TEXT("AnimInstance: bIsMantling = TRUE"));
+                    }
+                    break;
+                case EObstacleClimbType::ClimbOver:
+                    bIsVaulting = false;
+                    bIsMantling = false;
+                    bIsLedgeClimbing = true;
+                    if (GEngine)
+                    {
+                        GEngine->AddOnScreenDebugMessage(-1, 0.0f, FColor::Cyan, 
+                            TEXT("AnimInstance: bIsLedgeClimbing = TRUE"));
+                    }
+                    break;
+                default:
+                    bIsVaulting = false;
+                    bIsMantling = false;
+                    bIsLedgeClimbing = false;
+                    break;
+                }
+                
+                // Set climbing speed and height for animation blending
+                if (bIsClimbing)
+                {
+                    // New climb started - reset everything
+                    ClimbingSpeed = CharacterMovement->Velocity.Size();
+                    ClimbingHeight = PlayerCharacter->ObstacleClimbingComponent->CurrentObstacle.ObstacleHeight;
+                    bWasClimbing = true;
+                    ClimbingAnimationResetTimer = 0.0f;
+                    
+                    if (GEngine)
+                    {
+                        GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green, 
+                            TEXT("AnimInstance: New climb started, reset timer"));
+                    }
+                }
+                else if (bWasClimbing)
+                {
+                    // Climbing just finished, keep animation state active
+                    ClimbingAnimationResetTimer += DeltaSeconds;
+                    
+                    if (GEngine)
+                    {
+                        GEngine->AddOnScreenDebugMessage(-1, 0.0f, FColor::Magenta, 
+                            FString::Printf(TEXT("AnimInstance: Reset timer = %.2f"), ClimbingAnimationResetTimer));
+                    }
+                    
+                    // Keep animation states active for 2 seconds (animation duration)
+                    if (ClimbingAnimationResetTimer >= 2.0f)
+                    {
+                        ClimbingSpeed = 0.0f;
+                        ClimbingHeight = 0.0f;
+                        bIsVaulting = false;
+                        bIsMantling = false;
+                        bIsLedgeClimbing = false;
+                        bWasClimbing = false;
+                        ClimbingAnimationResetTimer = 0.0f;
+                        
+                        // Force update locomotion variables
+                        if (CharacterMovement)
+                        {
+                            Speed = CharacterMovement->Velocity.Size();
+                            bIsFalling = CharacterMovement->IsFalling();
+                        }
+                        
+                        if (GEngine)
+                        {
+                            GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green, 
+                                FString::Printf(TEXT("AnimInstance: RESET, Speed=%.1f"), Speed));
+                        }
+                    }
+                }
+                }
+            }
+        }
     }
 }

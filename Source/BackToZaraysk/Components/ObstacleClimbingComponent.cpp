@@ -23,31 +23,64 @@ void UObstacleClimbingComponent::TickComponent(float DeltaTime, ELevelTick TickT
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+    ACharacter* Character = Cast<ACharacter>(OwnerActor);
+    if (!Character) return;
+
     if (bIsClimbing)
     {
         UpdateClimbAnimation(DeltaTime);
         
-        // Принудительно обновляем позицию персонажа
-        ACharacter* Character = Cast<ACharacter>(OwnerActor);
-        if (Character)
+        // Убеждаемся, что движение отключено ТОЛЬКО во время активного лазания
+        if (Character->GetCharacterMovement()->MovementMode != MOVE_None)
         {
-            // Убеждаемся, что движение отключено
-            if (Character->GetCharacterMovement()->MovementMode != MOVE_None)
-            {
-                Character->GetCharacterMovement()->SetMovementMode(MOVE_None);
-            }
+            Character->GetCharacterMovement()->SetMovementMode(MOVE_None);
         }
     }
     else
     {
-        // Если не преодолеваем, убеждаемся что движение включено
-        ACharacter* Character = Cast<ACharacter>(OwnerActor);
-        if (Character && Character->GetCharacterMovement()->MovementMode == MOVE_None)
+        // Обрабатываем отложенное включение коллизий
+        if (bWaitingForCollisionRestore)
         {
-            Character->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
-            if (GEngine)
+            CollisionRestoreTimer += DeltaTime;
+            
+            if (CollisionRestoreTimer >= 0.5f)
             {
-                GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green, TEXT("Movement force restored"));
+                // Включаем коллизии ТЕПЕРЬ!
+                UCapsuleComponent* Capsule = Character->GetCapsuleComponent();
+                Capsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+                Capsule->SetCollisionResponseToAllChannels(ECR_Block);
+                Capsule->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+                
+                bWaitingForCollisionRestore = false;
+                CollisionRestoreTimer = 0.0f;
+                
+                if (GEngine)
+                {
+                    GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green, 
+                        FString::Printf(TEXT("✅ COLLISION ENABLED! Enabled: %d"), 
+                            (int32)Capsule->GetCollisionEnabled()));
+                }
+            }
+        }
+        
+        // DEBUG: Показываем состояние ПОСЛЕ лазания каждые 0.5 секунды
+        static float DebugTimer = 0.0f;
+        DebugTimer += DeltaTime;
+        
+        if (DebugTimer >= 0.5f)
+        {
+            DebugTimer = 0.0f;
+            
+            UCharacterMovementComponent* MovementComp = Character->GetCharacterMovement();
+            if (GEngine && MovementComp)
+            {
+                GEngine->AddOnScreenDebugMessage(100, 0.5f, FColor::White, 
+                    FString::Printf(TEXT("🔍 Status: Mode=%d, Ground=%s, Vel=%.1f, Collision=%d, Enabled=%s"), 
+                        (int32)MovementComp->MovementMode,
+                        MovementComp->IsMovingOnGround() ? TEXT("YES") : TEXT("NO"),
+                        MovementComp->Velocity.Size(),
+                        (int32)Character->GetCapsuleComponent()->GetCollisionEnabled(),
+                        MovementComp->IsComponentTickEnabled() ? TEXT("YES") : TEXT("NO")));
             }
         }
     }
@@ -75,9 +108,18 @@ bool UObstacleClimbingComponent::TryClimbObstacle()
         return false;
     }
 
+    // Reset from previous climb
+    CurrentClimbType = EObstacleClimbType::None;
+    
     CurrentObstacle = Obstacle;
     CurrentClimbType = Obstacle.ClimbType;
     bIsClimbing = true;
+    
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, 
+            FString::Printf(TEXT("TryStartClimb: Set CurrentClimbType=%d (was reset first)"), (int32)CurrentClimbType));
+    }
 
     if (GEngine)
     {
@@ -376,29 +418,52 @@ EObstacleClimbType UObstacleClimbingComponent::DetermineClimbType(const FObstacl
     float CharacterHeightThreshold = CharacterHeight * HeightThreshold; // 60% роста
     float CharacterMaxClimbHeight = CharacterHeight + 50.0f; // Рост + 50см
 
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::White, 
+            FString::Printf(TEXT("DetermineClimbType: Height=%.1f, Thickness=%.1f, CharHeight=%.1f, Threshold=%.1f, MaxHeight=%.1f"),
+                Obstacle.ObstacleHeight, Obstacle.ObstacleThickness, CharacterHeight, CharacterHeightThreshold, CharacterMaxClimbHeight));
+    }
+
     // Логика определения типа преодоления согласно требованиям
     if (Obstacle.ObstacleThickness <= ThicknessThreshold)
     {
         // Тонкое препятствие
         if (Obstacle.ObstacleHeight <= CharacterHeightThreshold)
         {
+            if (GEngine)
+            {
+                GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, TEXT("DetermineClimbType: Returning VAULT"));
+            }
             return EObstacleClimbType::Vault; // Перепрыгивание
         }
         else if (Obstacle.ObstacleHeight <= CharacterMaxClimbHeight)
         {
+            if (GEngine)
+            {
+                GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, TEXT("DetermineClimbType: Returning CLIMBOVER"));
+            }
             return EObstacleClimbType::ClimbOver; // Взбирание и спуск
+        }
+        else
+        {
+            if (GEngine)
+            {
+                GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("DetermineClimbType: Returning NONE (too high)"));
+            }
+            return EObstacleClimbType::None; // Слишком высокое
         }
     }
     else
     {
         // Толстое препятствие
-        if (Obstacle.ObstacleHeight <= CharacterHeightThreshold)
+        if (Obstacle.ObstacleHeight <= CharacterMaxClimbHeight)
         {
             return EObstacleClimbType::Climb; // Взбирание на препятствие
         }
-        else if (Obstacle.ObstacleHeight <= CharacterMaxClimbHeight)
+        else
         {
-            return EObstacleClimbType::Climb; // Взбирание на препятствие
+            return EObstacleClimbType::None; // Слишком высокое
         }
     }
 
@@ -410,6 +475,17 @@ void UObstacleClimbingComponent::StartClimbAnimation(const FObstacleInfo& Obstac
     ACharacter* Character = Cast<ACharacter>(OwnerActor);
     if (!Character)
         return;
+
+    // ЗАЩИТА: Если уже лезем - НЕ запускать повторно!
+    if (bIsClimbing)
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Yellow, 
+                TEXT("WARNING: Already climbing! Ignoring duplicate StartClimbAnimation call"));
+        }
+        return;
+    }
 
     StartLocation = Character->GetActorLocation();
     ClimbProgress = 0.0f;
@@ -426,7 +502,15 @@ void UObstacleClimbingComponent::StartClimbAnimation(const FObstacleInfo& Obstac
     Character->GetCharacterMovement()->StopMovementImmediately();
     
     // Отключаем коллизии капсулы для свободного перемещения
-    Character->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    UCapsuleComponent* Capsule = Character->GetCapsuleComponent();
+    Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Orange, 
+            FString::Printf(TEXT("COLLISION DISABLED! Enabled: %d"), 
+                (int32)Capsule->GetCollisionEnabled()));
+    }
     
     if (GEngine)
     {
@@ -439,13 +523,16 @@ void UObstacleClimbingComponent::StartClimbAnimation(const FObstacleInfo& Obstac
     switch (CurrentClimbType)
     {
     case EObstacleClimbType::Vault:
-        // Перепрыгивание - перемещаемся за препятствие
-        TargetLocation = Obstacle.ObstacleLocation + Character->GetActorForwardVector() * (Obstacle.ObstacleThickness + 100.0f);
+        // Перепрыгивание - перемещаемся ДАЛЕКО за препятствие на уровне земли
+        // УВЕЛИЧЕНО с 100 до 200 см для гарантированного избежания коллизий
+        TargetLocation = Obstacle.ObstacleLocation + Character->GetActorForwardVector() * (Obstacle.ObstacleThickness + 200.0f);
+        TargetLocation.Z = StartLocation.Z; // Оставляем на той же высоте, что и начали
         if (GEngine)
         {
             GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green, 
-                FString::Printf(TEXT("Vault: Moving to (%.1f, %.1f, %.1f)"), 
-                    TargetLocation.X, TargetLocation.Y, TargetLocation.Z));
+                FString::Printf(TEXT("Vault: Moving to (%.1f, %.1f, %.1f), Distance: %.1f cm"), 
+                    TargetLocation.X, TargetLocation.Y, TargetLocation.Z,
+                    Obstacle.ObstacleThickness + 200.0f));
         }
         break;
 
@@ -536,7 +623,8 @@ void UObstacleClimbingComponent::PerformVaultAnimation(float DeltaTime)
     float ArcHeight = 60.0f * ArcProgress; // Увеличена высота дуги для красоты
     CurrentLocation.Z += ArcHeight;
 
-    Character->SetActorLocation(CurrentLocation, false, nullptr, ETeleportType::TeleportPhysics);
+    // Во время анимации НЕ используем TeleportPhysics!
+    Character->SetActorLocation(CurrentLocation, false, nullptr, ETeleportType::None);
 }
 
 void UObstacleClimbingComponent::PerformClimbAnimation(float DeltaTime)
@@ -581,8 +669,8 @@ void UObstacleClimbingComponent::PerformClimbAnimation(float DeltaTime)
                 CurrentLocation.X, CurrentLocation.Y, CurrentLocation.Z, SmoothProgress));
     }
     
-    // Используем принудительное перемещение с отключением коллизий
-    Character->SetActorLocation(CurrentLocation, false, nullptr, ETeleportType::TeleportPhysics);
+    // Во время анимации НЕ используем TeleportPhysics!
+    Character->SetActorLocation(CurrentLocation, false, nullptr, ETeleportType::None);
 }
 
 void UObstacleClimbingComponent::PerformClimbOverAnimation(float DeltaTime)
@@ -619,12 +707,14 @@ void UObstacleClimbingComponent::PerformClimbOverAnimation(float DeltaTime)
         float PhaseProgress = (ClimbProgress - 0.5f) * 2.0f;
         float SmoothPhaseProgress = FMath::SmoothStep(0.0f, 1.0f, PhaseProgress);
         FVector TopLocation = TargetLocation;
-        FVector FinalLocation = CurrentObstacle.ObstacleLocation + Character->GetActorForwardVector() * (CurrentObstacle.ObstacleThickness + 100.0f);
+        // УВЕЛИЧЕНО с 100 до 200 см для избежания застревания
+        FVector FinalLocation = CurrentObstacle.ObstacleLocation + Character->GetActorForwardVector() * (CurrentObstacle.ObstacleThickness + 200.0f);
         FinalLocation.Z = StartLocation.Z;
         CurrentLocation = FMath::Lerp(TopLocation, FinalLocation, SmoothPhaseProgress);
     }
 
-    Character->SetActorLocation(CurrentLocation, false, nullptr, ETeleportType::TeleportPhysics);
+    // Во время анимации НЕ используем TeleportPhysics!
+    Character->SetActorLocation(CurrentLocation, false, nullptr, ETeleportType::None);
 }
 
 void UObstacleClimbingComponent::CompleteClimb()
@@ -632,34 +722,164 @@ void UObstacleClimbingComponent::CompleteClimb()
     ACharacter* Character = Cast<ACharacter>(OwnerActor);
     if (Character)
     {
-        // Принудительно устанавливаем финальную позицию
-        Character->SetActorLocation(TargetLocation, false, nullptr, ETeleportType::TeleportPhysics);
+        // КРИТИЧЕСКИ ВАЖНО: Сначала перемещаем персонажа ДАЛЕКО от препятствия
+        // Используем БЕЗОПАСНУЮ позицию - еще дальше вперед!
+        FVector SafeLocation = Character->GetActorLocation();
         
-        // Восстанавливаем коллизии капсулы
-        Character->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+        // Дополнительно сдвигаем вперед на 50 см для гарантии
+        SafeLocation += Character->GetActorForwardVector() * 50.0f;
         
-        // Восстанавливаем движение
-        Character->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
-        Character->GetCharacterMovement()->SetMovementMode(MOVE_Walking); // Двойная проверка
+        // ТАКЖЕ поднимаем на 10 см вверх, чтобы точно не застрять
+        SafeLocation.Z += 10.0f;
         
-        if (GEngine)
+        // Перемещаем в безопасную зону (коллизия отключена)
+        Character->SetActorLocation(SafeLocation, false, nullptr, ETeleportType::None);
+        
+        // КРИТИЧЕСКИ ВАЖНО: Принудительно синхронизируем Mesh с капсулой!
+        if (USkeletalMeshComponent* Mesh = Character->GetMesh())
         {
-            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
-                FString::Printf(TEXT("Movement restored. Mode: %d"), 
-                    (int32)Character->GetCharacterMovement()->MovementMode));
+            Mesh->SetRelativeLocation(FVector::ZeroVector);
+            Mesh->SetRelativeRotation(FRotator::ZeroRotator);
+            Mesh->UpdateComponentToWorld();
+            
+            if (GEngine)
+            {
+                GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Yellow, 
+                    TEXT("🔧 Mesh synchronized with capsule!"));
+            }
         }
         
         if (GEngine)
         {
-            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
-                FString::Printf(TEXT("Obstacle Climbing: Completed! Final position (%.1f, %.1f, %.1f)"), 
+            GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Orange, 
+                FString::Printf(TEXT("Safe position: (%.1f, %.1f, %.1f)"), 
+                    SafeLocation.X, SafeLocation.Y, SafeLocation.Z));
+        }
+        
+        // ТЕПЕРЬ проверяем землю из БЕЗОПАСНОЙ позиции
+        FHitResult HitResult;
+        FVector StartTrace = SafeLocation;
+        FVector EndTrace = StartTrace - FVector(0, 0, 300.0f); // Увеличено до 300 см
+        
+        FVector FinalLocation = SafeLocation;
+        if (GetWorld()->LineTraceSingleByChannel(HitResult, StartTrace, EndTrace, ECC_Visibility))
+        {
+            // Вычисляем позицию на земле
+            FinalLocation = HitResult.Location + FVector(0, 0, Character->GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+        }
+        
+        // Перемещаем персонажа на землю
+        Character->SetActorLocation(FinalLocation, false, nullptr, ETeleportType::None);
+        
+        // Снова синхронизируем Mesh после финального перемещения
+        if (USkeletalMeshComponent* Mesh = Character->GetMesh())
+        {
+            Mesh->SetRelativeLocation(FVector::ZeroVector);
+            Mesh->SetRelativeRotation(FRotator::ZeroRotator);
+            Mesh->UpdateComponentToWorld();
+        }
+        
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Magenta, 
+                FString::Printf(TEXT("Moved to ground: (%.1f, %.1f, %.1f)"), 
+                    FinalLocation.X, FinalLocation.Y, FinalLocation.Z));
+        }
+        
+        // НЕ включаем коллизии сразу! Запускаем таймер на 0.5 секунды
+        bWaitingForCollisionRestore = true;
+        CollisionRestoreTimer = 0.0f;
+        
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Yellow, 
+                TEXT("⏱️ Collision restore delayed for 0.5 seconds..."));
+        }
+        
+        // Плавное восстановление движения
+        Character->GetCharacterMovement()->StopMovementImmediately();
+        Character->GetCharacterMovement()->Velocity = FVector::ZeroVector;
+        
+        // Восстанавливаем режим ходьбы - АГРЕССИВНЫЙ подход
+        UCharacterMovementComponent* MovementComp = Character->GetCharacterMovement();
+        
+        // КРИТИЧЕСКИ ВАЖНО: Сначала принудительно обнуляем состояние
+        MovementComp->StopMovementImmediately();
+        MovementComp->Velocity = FVector::ZeroVector;
+        MovementComp->bForceMaxAccel = false;
+        
+        // Включаем физику и обновление
+        MovementComp->SetComponentTickEnabled(true);
+        MovementComp->SetUpdatedComponent(Character->GetRootComponent());
+        
+        // ТЕПЕРЬ устанавливаем режим ходьбы - используем ВСЕ методы подряд!
+        MovementComp->SetMovementMode(MOVE_Walking);
+        MovementComp->SetDefaultMovementMode();
+        
+        // Принудительно через свойство
+        MovementComp->MovementMode = MOVE_Walking;
+        
+        // Принудительно обновляем компонент
+        MovementComp->UpdateComponentVelocity();
+        
+        // КРИТИЧЕСКИ ВАЖНО: Принудительно ставим персонажа на землю
+        FFindFloorResult FloorResult;
+        MovementComp->FindFloor(Character->GetActorLocation(), FloorResult, false);
+        
+        if (FloorResult.IsWalkableFloor())
+        {
+            // Устанавливаем базу (пол) для персонажа
+            MovementComp->SetBase(FloorResult.HitResult.GetComponent(), FloorResult.HitResult.BoneName);
+            
+            // Принудительно обновляем состояние пола
+            MovementComp->CurrentFloor = FloorResult;
+            MovementComp->bForceNextFloorCheck = false;
+            
+            // ТЕПЕРЬ устанавливаем режим ходьбы
+            MovementComp->SetMovementMode(MOVE_Walking);
+            
+            if (GEngine)
+            {
+                GEngine->AddOnScreenDebugMessage(-1, 10.0f, FColor::Cyan, 
+                    TEXT("🎯 FLOOR SET! Character grounded on walkable surface!"));
+            }
+        }
+        else
+        {
+            if (GEngine)
+            {
+                GEngine->AddOnScreenDebugMessage(-1, 10.0f, FColor::Red, 
+                    TEXT("⚠️ WARNING: No walkable floor found!"));
+            }
+        }
+        
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 10.0f, FColor::Green, 
+                FString::Printf(TEXT("✅ MOVEMENT RESTORED! Mode: %d (3=Walking), Ground: %s, Velocity: %.1f"), 
+                    (int32)Character->GetCharacterMovement()->MovementMode,
+                    Character->GetCharacterMovement()->IsMovingOnGround() ? TEXT("YES") : TEXT("NO"),
+                    Character->GetCharacterMovement()->Velocity.Size()));
+        }
+        
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 10.0f, FColor::Yellow, 
+                FString::Printf(TEXT("🎯 CLIMB COMPLETE! Position: (%.1f, %.1f, %.1f)"), 
                     Character->GetActorLocation().X, Character->GetActorLocation().Y, Character->GetActorLocation().Z));
         }
     }
 
     bIsClimbing = false;
-    CurrentClimbType = EObstacleClimbType::None;
+    // Don't reset CurrentClimbType immediately - let animation finish
+    // It will be reset when starting next climb
     OnClimbCompleted.Broadcast();
+    
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, 
+            FString::Printf(TEXT("CompleteClimb: bIsClimbing=false, CurrentClimbType still=%d"), (int32)CurrentClimbType));
+    }
 }
 
 void UObstacleClimbingComponent::CancelClimb()
