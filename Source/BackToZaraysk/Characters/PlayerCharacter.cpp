@@ -10,8 +10,10 @@
 #include "BackToZaraysk/Inventory/InventoryComponent.h"
 #include "../Components/MovementComponents/BTZBaseCharMovementComponent.h"
 #include "../Components/ObstacleClimbingComponent.h"
+#include "../Components/StrafeComponent.h"
 #include "Animation/AnimBlueprintGeneratedClass.h"
 #include "GameFramework/PlayerController.h"
+#include "Curves/CurveFloat.h"
 
 APlayerCharacter::APlayerCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -43,12 +45,21 @@ APlayerCharacter::APlayerCharacter(const FObjectInitializer& ObjectInitializer)
 
     ObstacleClimbingComponent = CreateDefaultSubobject<UObstacleClimbingComponent>(TEXT("ObstacleClimbingComponent"));
 
+    StrafeComponent = CreateDefaultSubobject<UStrafeComponent>(TEXT("StrafeComponent"));
+
 }
 
 void APlayerCharacter::MoveForward(float Value)
 {
 	if (!FMath::IsNearlyZero(Value, 1e-6f))
 	{
+		// ИСПРАВЛЕНО: Полная блокировка движения во время стрейфа
+		if (StrafeComponent && StrafeComponent->bIsStrafing)
+		{
+			// Во время стрейфа полностью блокируем обычное движение
+			return;
+		}
+		
 		FRotator YawRotator(0.0f, GetControlRotation().Yaw, 0.0f);
 		FVector ForwardVector = YawRotator.RotateVector(FVector::ForwardVector);
 		AddMovementInput(ForwardVector, Value);
@@ -59,6 +70,13 @@ void APlayerCharacter::MoveRight(float Value)
 {
 	if (!FMath::IsNearlyZero(Value, 1e-6f))
 	{
+		// ИСПРАВЛЕНО: Полная блокировка движения во время стрейфа
+		if (StrafeComponent && StrafeComponent->bIsStrafing)
+		{
+			// Во время стрейфа полностью блокируем обычное движение
+			return;
+		}
+		
 		FRotator YawRotator(0.0f, GetControlRotation().Yaw, 0.0f);
 		FVector RightVector = YawRotator.RotateVector(FVector::RightVector);
 		AddMovementInput(RightVector, Value);
@@ -179,6 +197,7 @@ void APlayerCharacter::BeginPlay()
 		TimelineCallback.BindUFunction(this, FName("UpdateCameraMove"));
 		CameraMoveTimeline.AddInterpFloat(CameraCurve, TimelineCallback);
 	}
+
 }
 void APlayerCharacter::Tick(float DeltaTime)
 {
@@ -209,6 +228,7 @@ void APlayerCharacter::Tick(float DeltaTime)
     CurrentLeanAngleDeg = FMath::FInterpTo(CurrentLeanAngleDeg, TargetLeanAngleDeg, DeltaTime, LeanInterpSpeed);
     float TargetSideOffset = (TargetLeanAngleDeg / MaxLeanAngleDeg) * MaxLeanSideOffsetCm;
     CurrentLeanSideOffset = FMath::FInterpTo(CurrentLeanSideOffset, TargetSideOffset, DeltaTime, LeanInterpSpeed);
+
     // Корпус и капсула остаются на месте: смещаем только пивот камеры (выше при привязке к голове)
 
     // Передаём угол наклона в анимграф через параметры на SkeletalMesh (Animation Blueprint может читать их как AnimBP variables)
@@ -266,6 +286,65 @@ void APlayerCharacter::TryClimbObstacle()
         {
             GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Red, TEXT("PlayerCharacter: No obstacle climbing component!"));
         }
+    }
+}
+
+// Strafe Implementation (delegated to StrafeComponent)
+void APlayerCharacter::StrafeRight()
+{
+    if (StrafeComponent)
+    {
+        StrafeComponent->TryStrafe(EStrafeType::Right);
+    }
+}
+
+void APlayerCharacter::StrafeLeft()
+{
+    if (StrafeComponent)
+    {
+        StrafeComponent->TryStrafe(EStrafeType::Left);
+    }
+}
+
+bool APlayerCharacter::CanStrafe() const
+{
+    if (StrafeComponent)
+    {
+        return StrafeComponent->CanStrafe();
+    }
+    return false;
+}
+
+// Input handling implementation (delegated to StrafeComponent)
+void APlayerCharacter::HandleAInput(bool bPressed)
+{
+    if (StrafeComponent)
+    {
+        StrafeComponent->HandleAInput(bPressed);
+    }
+}
+
+void APlayerCharacter::HandleDInput(bool bPressed)
+{
+    if (StrafeComponent)
+    {
+        StrafeComponent->HandleDInput(bPressed);
+    }
+}
+
+void APlayerCharacter::HandleSpaceInput(bool bPressed)
+{
+    // ИСПРАВЛЕНО: Добавлена обработка Space для стрейфа
+    if (StrafeComponent)
+    {
+        StrafeComponent->HandleSpaceInput(bPressed);
+    }
+    
+    // Дополнительно можно обработать прыжок, если не в режиме стрейфа
+    if (!bPressed && StrafeComponent && !StrafeComponent->bIsStrafing)
+    {
+        // Обычный прыжок, если не стрейфим
+        Jump();
     }
 }
 

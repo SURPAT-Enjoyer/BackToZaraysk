@@ -45,6 +45,13 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "IK Settings")
 	float RightFootIKAlpha = 1.0f;
 
+	// Strafe animation variables
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Character animation")
+	bool bIsStrafing = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Character animation")
+	float StrafeDirection = 0.0f;
+
 private:
 	TWeakObjectPtr<class ABTZBaseCharacter> CachedBaseCharacter;
 };

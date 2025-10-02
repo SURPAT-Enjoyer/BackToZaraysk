@@ -6,6 +6,8 @@
 #include "../PlayerCharacter.h"
 #include "Blueprint/UserWidget.h"
 #include "BackToZaraysk/Inventory/InventoryWidget.h"
+#include "BackToZaraysk/Inventory/InventoryItemData.h"
+#include "BackToZaraysk/Inventory/InventoryComponent.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupBase.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupCube.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupParallelepiped.h"
@@ -52,6 +54,14 @@ void ABTZPlayerController::SetupInputComponent()
     InputComponent->BindAction("LeanLeft", EInputEvent::IE_Released, this, &ABTZPlayerController::StopLeanLeft);
     InputComponent->BindAction("LeanRight", EInputEvent::IE_Pressed, this, &ABTZPlayerController::StartLeanRight);
     InputComponent->BindAction("LeanRight", EInputEvent::IE_Released, this, &ABTZPlayerController::StopLeanRight);
+    
+    // ИСПРАВЛЕНО: Добавлены привязки для системы стрейфа
+    InputComponent->BindAction("StrafeLeft", EInputEvent::IE_Pressed, this, &ABTZPlayerController::StartStrafeLeft);
+    InputComponent->BindAction("StrafeLeft", EInputEvent::IE_Released, this, &ABTZPlayerController::StopStrafeLeft);
+    InputComponent->BindAction("StrafeRight", EInputEvent::IE_Pressed, this, &ABTZPlayerController::StartStrafeRight);
+    InputComponent->BindAction("StrafeRight", EInputEvent::IE_Released, this, &ABTZPlayerController::StopStrafeRight);
+    InputComponent->BindAction("StrafeSpace", EInputEvent::IE_Pressed, this, &ABTZPlayerController::StartStrafeSpace);
+    InputComponent->BindAction("StrafeSpace", EInputEvent::IE_Released, this, &ABTZPlayerController::StopStrafeSpace);
 }
 void ABTZPlayerController::Interact()
 {
@@ -354,6 +364,73 @@ void ABTZPlayerController::StopLeanRight()
         if (APlayerCharacter* PC = Cast<APlayerCharacter>(CachedBaseCharacter.Get()))
         {
             PC->ResetLean();
+        }
+    }
+}
+
+// ИСПРАВЛЕНО: Добавлены функции стрейфа в PlayerController
+void ABTZPlayerController::StartStrafeLeft()
+{
+    if (ensure(CachedBaseCharacter.IsValid()))
+    {
+        if (APlayerCharacter* PC = Cast<APlayerCharacter>(CachedBaseCharacter.Get()))
+        {
+            PC->HandleAInput(true);
+        }
+    }
+}
+
+void ABTZPlayerController::StopStrafeLeft()
+{
+    if (ensure(CachedBaseCharacter.IsValid()))
+    {
+        if (APlayerCharacter* PC = Cast<APlayerCharacter>(CachedBaseCharacter.Get()))
+        {
+            PC->HandleAInput(false);
+        }
+    }
+}
+
+void ABTZPlayerController::StartStrafeRight()
+{
+    if (ensure(CachedBaseCharacter.IsValid()))
+    {
+        if (APlayerCharacter* PC = Cast<APlayerCharacter>(CachedBaseCharacter.Get()))
+        {
+            PC->HandleDInput(true);
+        }
+    }
+}
+
+void ABTZPlayerController::StopStrafeRight()
+{
+    if (ensure(CachedBaseCharacter.IsValid()))
+    {
+        if (APlayerCharacter* PC = Cast<APlayerCharacter>(CachedBaseCharacter.Get()))
+        {
+            PC->HandleDInput(false);
+        }
+    }
+}
+
+void ABTZPlayerController::StartStrafeSpace()
+{
+    if (ensure(CachedBaseCharacter.IsValid()))
+    {
+        if (APlayerCharacter* PC = Cast<APlayerCharacter>(CachedBaseCharacter.Get()))
+        {
+            PC->HandleSpaceInput(true);
+        }
+    }
+}
+
+void ABTZPlayerController::StopStrafeSpace()
+{
+    if (ensure(CachedBaseCharacter.IsValid()))
+    {
+        if (APlayerCharacter* PC = Cast<APlayerCharacter>(CachedBaseCharacter.Get()))
+        {
+            PC->HandleSpaceInput(false);
         }
     }
 }

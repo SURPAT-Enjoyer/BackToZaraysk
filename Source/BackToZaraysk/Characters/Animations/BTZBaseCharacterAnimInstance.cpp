@@ -3,7 +3,9 @@
 
 #include "BTZBaseCharacterAnimInstance.h"
 #include "../BTZBaseCharacter.h"
+#include "../PlayerCharacter.h"
 #include "../../Components/MovementComponents/BTZBaseCharMovementComponent.h"
+#include "../../Components/StrafeComponent.h"
 
 void UBTZBaseCharacterAnimInstance::NativeBeginPlay()
 {
@@ -28,6 +30,33 @@ void UBTZBaseCharacterAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 	bIsSprinting = CharacterMovement->IsSprinting();
 	bIsOutOfStamina = CharacterMovement->IsOutOfStamina();
 	bIsProning = CharacterMovement->IsProning();
+
+	// Strafe animation synchronization
+	if (CachedBaseCharacter.IsValid())
+	{
+		// Cast to PlayerCharacter to access strafe component
+		if (APlayerCharacter* PlayerCharacter = Cast<APlayerCharacter>(CachedBaseCharacter.Get()))
+		{
+			if (PlayerCharacter->StrafeComponent)
+			{
+				bIsStrafing = PlayerCharacter->StrafeComponent->bIsStrafing;
+				
+				// Convert EStrafeType to float direction
+				switch (PlayerCharacter->StrafeComponent->CurrentStrafeType)
+				{
+				case EStrafeType::Left:
+					StrafeDirection = -1.0f;
+					break;
+				case EStrafeType::Right:
+					StrafeDirection = 1.0f;
+					break;
+				default:
+					StrafeDirection = 0.0f;
+					break;
+				}
+			}
+		}
+	}
 
     // ИСПРАВЛЕНО: Улучшенная обработка ИК данных в AnimInstance
     if (CachedBaseCharacter.IsValid())

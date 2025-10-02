@@ -43,6 +43,14 @@ private:
     void StopLeanLeft();
     void StartLeanRight();
     void StopLeanRight();
+    
+    // ИСПРАВЛЕНО: Добавлены объявления функций стрейфа
+    void StartStrafeLeft();
+    void StopStrafeLeft();
+    void StartStrafeRight();
+    void StopStrafeRight();
+    void StartStrafeSpace();
+    void StopStrafeSpace();
 
 	TSoftObjectPtr<class ABTZBaseCharacter> CachedBaseCharacter;
 

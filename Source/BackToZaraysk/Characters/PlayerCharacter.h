@@ -5,7 +5,9 @@
 #include "CoreMinimal.h"
 #include "BTZBaseCharacter.h"
 #include <Components/TimelineComponent.h>
+#include "Curves/CurveFloat.h"
 #include "../Components/ObstacleClimbingComponent.h"
+#include "../Components/StrafeComponent.h"
 #include "PlayerCharacter.generated.h"
 
 
@@ -58,6 +60,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Obstacle Climbing")
 	class UObstacleClimbingComponent* ObstacleClimbingComponent;
 
+	// Компонент стрейфа
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Strafe")
+	class UStrafeComponent* StrafeComponent;
+
 	// Настройки IK для ног
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="IK Settings")
 	bool bEnableFootIK = true;
@@ -81,6 +87,27 @@ public:
 	// Максимальное боковое смещение (см) для выглядывания
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Lean")
 	float MaxLeanSideOffsetCm = 25.0f;
+
+	// Strafe mechanics
+	UFUNCTION(BlueprintCallable, Category="Strafe")
+	void StrafeRight();
+
+	UFUNCTION(BlueprintCallable, Category="Strafe")
+	void StrafeLeft();
+
+	UFUNCTION(BlueprintCallable, Category="Strafe")
+	bool CanStrafe() const;
+
+	// Input handling functions
+	UFUNCTION(BlueprintCallable, Category="Strafe Input")
+	void HandleAInput(bool bPressed);
+
+	UFUNCTION(BlueprintCallable, Category="Strafe Input")
+	void HandleDInput(bool bPressed);
+
+	UFUNCTION(BlueprintCallable, Category="Strafe Input")
+	void HandleSpaceInput(bool bPressed);
+
 
 
 protected:
@@ -115,5 +142,7 @@ private:
     float CurrentLeanAngleDeg = 0.0f;
     UPROPERTY(BlueprintReadOnly, Category="Lean", meta=(AllowPrivateAccess="true"))
     float CurrentLeanSideOffset = 0.0f;
+
+
 	
 };
