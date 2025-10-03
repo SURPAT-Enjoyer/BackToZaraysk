@@ -56,6 +56,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Inventory")
 	class UInventoryComponent* InventoryComponent;
 
+	// Компонент экипировки
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Equipment")
+	class UEquipmentComponent* EquipmentComponent;
+
 	// Компонент преодоления препятствий
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Obstacle Climbing")
 	class UObstacleClimbingComponent* ObstacleClimbingComponent;

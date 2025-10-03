@@ -8,6 +8,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "BackToZaraysk/Inventory/InventoryComponent.h"
+#include "BackToZaraysk/Components/EquipmentComponent.h"
 #include "../Components/MovementComponents/BTZBaseCharMovementComponent.h"
 #include "../Components/ObstacleClimbingComponent.h"
 #include "../Components/StrafeComponent.h"
@@ -42,6 +43,8 @@ APlayerCharacter::APlayerCharacter(const FObjectInitializer& ObjectInitializer)
 	//SkeletalMeshComponent->SetupAttachment(RootComponent);
 
     InventoryComponent = CreateDefaultSubobject<UInventoryComponent>(TEXT("InventoryComponent"));
+
+    EquipmentComponent = CreateDefaultSubobject<UEquipmentComponent>(TEXT("EquipmentComponent"));
 
     ObstacleClimbingComponent = CreateDefaultSubobject<UObstacleClimbingComponent>(TEXT("ObstacleClimbingComponent"));
 

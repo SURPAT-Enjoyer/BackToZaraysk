@@ -11,6 +11,8 @@
 #include "BackToZaraysk/GameData/Items/Test/PickupBase.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupCube.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupParallelepiped.h"
+#include "BackToZaraysk/GameData/Items/TacticalVest.h"
+#include "BackToZaraysk/Inventory/EquippableItemData.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Engine/GameViewportClient.h"
@@ -82,11 +84,93 @@ void ABTZPlayerController::Interact()
                 UInventoryItemData* Data = nullptr;
                 if (Pickup->ItemClass)
                 {
-                    Data = NewObject<UInventoryItemData>(this, Pickup->ItemClass);
+                    // Безопасное создание объекта из класса
+                    Data = Cast<UInventoryItemData>(NewObject<UObject>(this, Pickup->ItemClass));
+                    if (GEngine)
+                    {
+                        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, 
+                            FString::Printf(TEXT("🔍 Pickup ItemClass: %s, Created Object: %s"), 
+                                *Pickup->ItemClass->GetName(),
+                                Data ? *Data->GetClass()->GetName() : TEXT("null")));
+                        
+                        // Проверяем, является ли это экипируемым предметом
+                        if (UEquippableItemData* EquipData = Cast<UEquippableItemData>(Data))
+                        {
+                            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+                                FString::Printf(TEXT("✅ EquippableItemData found! EquippedMesh: %s, Slot: %d"), 
+                                    EquipData->EquippedMesh ? TEXT("SET") : TEXT("NULL"),
+                                    (int32)EquipData->EquipmentSlot));
+                        }
+                        else if (Data)
+                        {
+                            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, 
+                                FString::Printf(TEXT("⚠️ Created object is not UEquippableItemData, it's: %s"), 
+                                    *Data->GetClass()->GetName()));
+                        }
+                    }
                 }
                 else
                 {
-                    Data = NewObject<UInventoryItemData>(this);
+                    // Если ItemClass не установлен, создаем предмет на основе типа Pickup
+                    if (Cast<ATacticalVest>(Pickup))
+                    {
+                        // Пытаемся загрузить Data Asset для тактического жилета
+                        FString DataAssetPath = TEXT("/Game/BackToZaraysk/Core/Items/Equipment/DA_TacticalVest.DA_TacticalVest");
+                        UObject* LoadedDataAsset = LoadObject<UObject>(nullptr, *DataAssetPath);
+                        
+                        if (LoadedDataAsset)
+                        {
+                            // Копируем данные из Data Asset
+                            Data = Cast<UInventoryItemData>(NewObject<UObject>(this, LoadedDataAsset->GetClass()));
+                            if (UEquippableItemData* SourceData = Cast<UEquippableItemData>(LoadedDataAsset))
+                            {
+                                if (UEquippableItemData* EquipData = Cast<UEquippableItemData>(Data))
+                                {
+                                    EquipData->DisplayName = SourceData->DisplayName;
+                                    EquipData->SizeInCellsX = SourceData->SizeInCellsX;
+                                    EquipData->SizeInCellsY = SourceData->SizeInCellsY;
+                                    EquipData->EquipmentSlot = SourceData->EquipmentSlot;
+                                    EquipData->AttachSocketName = SourceData->AttachSocketName;
+                                    EquipData->EquippedMesh = SourceData->EquippedMesh;
+                                    EquipData->bRotatable = SourceData->bRotatable;
+                                }
+                            }
+                            if (GEngine)
+                            {
+                                GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+                                    TEXT("🔧 Loaded Data Asset for TacticalVest"));
+                            }
+                        }
+                        else
+                        {
+                            // Fallback: создаем UEquippableItemData вручную
+                            Data = NewObject<UEquippableItemData>(this);
+                            if (UEquippableItemData* EquipData = Cast<UEquippableItemData>(Data))
+                            {
+                                EquipData->DisplayName = FText::FromString(TEXT("Тактический жилет"));
+                                EquipData->SizeInCellsX = 3;
+                                EquipData->SizeInCellsY = 3;
+                                EquipData->EquipmentSlot = EEquipmentSlotType::Vest;
+                                EquipData->AttachSocketName = FName(TEXT("spine_03"));
+                                EquipData->bRotatable = false;
+                                // EquippedMesh остается null - нужно будет установить вручную
+                            }
+                            if (GEngine)
+                            {
+                                GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, 
+                                    TEXT("⚠️ Data Asset not found, created UEquippableItemData manually (EquippedMesh will be null)"));
+                            }
+                        }
+                    }
+                    else
+                    {
+                        Data = NewObject<UInventoryItemData>(this);
+                        if (GEngine)
+                        {
+                            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, 
+                                TEXT("🔍 Pickup ItemClass is null, created default UInventoryItemData"));
+                        }
+                    }
                 }
                 if (Data && Data->SizeInCellsX<=0) { Data->SizeInCellsX=1; }
                 if (Data && Data->SizeInCellsY<=0) { Data->SizeInCellsY=1; }
@@ -117,13 +201,31 @@ void ABTZPlayerController::DropItem()
     if (!CachedBaseCharacter.IsValid()) return;
     UInventoryComponent* Inv = CachedBaseCharacter->FindComponentByClass<UInventoryComponent>();
     if (!Inv) return;
-    UInventoryItemData* Item = Inv->RemoveLastFromBackpack();
+    
+    // Получаем последний предмет из инвентаря
+    if (Inv->BackpackItems.Num() == 0) return;
+    UInventoryItemData* Item = Inv->BackpackItems.Last();
     if (!Item) return;
+    
+    // Удаляем предмет из инвентаря
+    Inv->RemoveSpecificFromBackpack(Item);
+    
     FVector ViewLoc; FRotator ViewRot; GetPlayerViewPoint(ViewLoc, ViewRot);
     const FVector SpawnLoc = ViewLoc + ViewRot.Vector() * 80.f;
     FActorSpawnParameters S; S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+    
     TSubclassOf<AActor> DropClass = APickupCube::StaticClass();
-    if (Item->SizeInCellsX == 2 && Item->SizeInCellsY == 1)
+    
+    // Проверяем, является ли предмет экипируемым
+    if (UEquippableItemData* EquippableItem = Cast<UEquippableItemData>(Item))
+    {
+        if (EquippableItem->SizeInCellsX == 3 && EquippableItem->SizeInCellsY == 3)
+        {
+            // Для тактического жилета 3x3
+            DropClass = ATacticalVest::StaticClass();
+        }
+    }
+    else if (Item->SizeInCellsX == 2 && Item->SizeInCellsY == 1)
     {
         DropClass = APickupParallelepiped::StaticClass();
     }

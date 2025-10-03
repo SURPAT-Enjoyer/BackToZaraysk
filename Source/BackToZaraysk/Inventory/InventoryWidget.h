@@ -4,6 +4,9 @@
 #include "Blueprint/UserWidget.h"
 #include "InventoryWidget.generated.h"
 
+class UInventoryItemWidget;
+class UInventoryItemData;
+
 UCLASS()
 class BACKTOZARAYSK_API UInventoryWidget : public UUserWidget
 {
@@ -31,6 +34,10 @@ public:
     virtual void NativeOnDragCancelled(const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation) override;
     void RemoveItemWidget(class UInventoryItemWidget* Widget);
     void RemoveItemMapping(class UInventoryItemData* ItemData);
+    
+    // Функции для слотов экипировки
+    void UpdateEquipmentSlots();
+    void CreateEquipmentSlotWidget(const class UEquippableItemData* Item, int32 SlotIndex);
 
 private:
 	bool bShown = false;
@@ -48,6 +55,13 @@ protected:
     FVector2D BackpackCellSize = FVector2D(60.f, 60.f);
     UPROPERTY()
     TArray<TObjectPtr<class UWidget>> BackpackIconWidgets;
+
+    // Слоты экипировки
+    UPROPERTY(BlueprintReadOnly)
+    class UCanvasPanel* EquipmentPanelRef = nullptr;
+    FVector2D EquipmentSlotSize = FVector2D(80.f, 80.f);
+    UPROPERTY()
+    TArray<TObjectPtr<class UWidget>> EquipmentSlotWidgets;
     // Связь данных предмета с его виджетом для сохранения положения между открытиями
     UPROPERTY(BlueprintReadOnly)
     TMap<TObjectPtr<class UInventoryItemData>, TObjectPtr<class UInventoryItemWidget>> ItemToWidget;

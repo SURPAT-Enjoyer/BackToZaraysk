@@ -45,6 +45,9 @@ protected:
 
     UFUNCTION()
     void OnDropClicked();
+
+    UFUNCTION()
+    void OnEquipClicked();
 };
 
 

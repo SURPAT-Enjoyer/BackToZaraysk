@@ -1,4 +1,8 @@
 #include "InventoryWidget.h"
+#include "InventoryItemData.h"
+#include "EquippableItemData.h"
+#include "EquipmentSlotType.h"
+#include "BackToZaraysk/Characters/PlayerCharacter.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/Border.h"
@@ -13,6 +17,8 @@
 #include "Components/Border.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "BackToZaraysk/Characters/BTZBaseCharacter.h"
+#include "BackToZaraysk/Inventory/InventoryItemWidget.h"
+#include "BackToZaraysk/Inventory/InventoryComponent.h"
 
 void UInventoryWidget::NativeOnInitialized()
 {
@@ -347,8 +353,8 @@ void UInventoryWidget::AddBackpackItemIcon(UInventoryItemData* ItemData)
         S->SetAnchors(FAnchors(0.f, 0.f, 0.f, 0.f));
         S->SetAlignment(FVector2D(0.f, 0.f));
         S->SetPosition(BackpackGridPosition + FVector2D(BackpackCellSize.X * X, BackpackCellSize.Y * Y));
-        const int32 SX = ItemData ? FMath::Max(1, ItemData->SizeInCellsX) : 1;
-        const int32 SY = ItemData ? FMath::Max(1, ItemData->SizeInCellsY) : 1;
+        int32 SX = ItemData ? FMath::Max(1, ItemData->SizeInCellsX) : 1;
+        int32 SY = ItemData ? FMath::Max(1, ItemData->SizeInCellsY) : 1;
         S->SetSize(FVector2D(BackpackCellSize.X * SX, BackpackCellSize.Y * SY));
         S->SetZOrder(5);
     }
@@ -359,6 +365,9 @@ void UInventoryWidget::AddBackpackItemIcon(UInventoryItemData* ItemData)
 void UInventoryWidget::SyncBackpack(const TArray<UInventoryItemData*>& Items)
 {
     if (!RightPanelRef) return;
+
+    // Обновляем слоты экипировки
+    UpdateEquipmentSlots();
 
     // 1) Удаляем виджеты тех предметов, которых больше нет в данных
     for (auto ItMap = ItemToWidget.CreateIterator(); ItMap; ++ItMap)
@@ -400,8 +409,8 @@ void UInventoryWidget::SyncBackpack(const TArray<UInventoryItemData*>& Items)
         }
 
         // Новый предмет — создаём и авторазмещаем
-        const int32 SX = It ? FMath::Max(1, It->SizeInCellsX) : 1;
-        const int32 SY = It ? FMath::Max(1, It->SizeInCellsY) : 1;
+        int32 SX = It ? FMath::Max(1, It->SizeInCellsX) : 1;
+        int32 SY = It ? FMath::Max(1, It->SizeInCellsY) : 1;
         int32 CellX, CellY;
         const int32 GridIndex = BackpackGridIndex;
         if (TryAutoPlaceInGrid(GridIndex, SX, SY, CellX, CellY))
@@ -530,8 +539,8 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
             CellX = FMath::Clamp(CellX, 0, GridAreas[GridIndex].CellsX - 1);
             CellY = FMath::Clamp(CellY, 0, GridAreas[GridIndex].CellsY - 1);
             
-            const int32 SX = DragItem->bRotated ? DragItem->SizeY : DragItem->SizeX;
-            const int32 SY = DragItem->bRotated ? DragItem->SizeX : DragItem->SizeY;
+            int32 SX = DragItem->bRotated ? DragItem->SizeY : DragItem->SizeX;
+            int32 SY = DragItem->bRotated ? DragItem->SizeX : DragItem->SizeY;
             
             // Проверяем, помещается ли предмет в выбранную позицию
             if (!IsAreaFree(GridIndex, CellX, CellY, SX, SY, DragItem))
@@ -603,8 +612,8 @@ bool UInventoryWidget::IsAreaFree(int32 GridIndex, int32 CellX, int32 CellY, int
 void UInventoryWidget::UpsertPlacement(UInventoryItemWidget* Widget, int32 GridIndex, int32 CellX, int32 CellY)
 {
     if (!Widget) return;
-    const int32 SX = Widget->bRotated ? Widget->SizeY : Widget->SizeX;
-    const int32 SY = Widget->bRotated ? Widget->SizeX : Widget->SizeY;
+    int32 SX = Widget->bRotated ? Widget->SizeY : Widget->SizeX;
+    int32 SY = Widget->bRotated ? Widget->SizeX : Widget->SizeY;
     for (FPlacedItem& P : Placed)
     {
         if (P.Widget == Widget)
@@ -698,8 +707,8 @@ FReply UInventoryWidget::HandleItemRotation(const FGeometry& InGeometry, const F
             {
                 // Временно вращаем предмет
                 HoverItem->bRotated = !HoverItem->bRotated;
-                const int32 SX = HoverItem->bRotated ? HoverItem->SizeY : HoverItem->SizeX;
-                const int32 SY = HoverItem->bRotated ? HoverItem->SizeX : HoverItem->SizeY;
+                int32 SX = HoverItem->bRotated ? HoverItem->SizeY : HoverItem->SizeX;
+                int32 SY = HoverItem->bRotated ? HoverItem->SizeX : HoverItem->SizeY;
                 
                 // Проверяем, помещается ли предмет в новом положении
                 if (IsAreaFree(PlacedItem->GridIndex, PlacedItem->CellX, PlacedItem->CellY, SX, SY, HoverItem))
@@ -763,8 +772,8 @@ bool UInventoryWidget::NativeOnDragOver(const FGeometry& InGeometry, const FDrag
     CellX = FMath::Clamp(CellX, 0, A.CellsX - 1);
     CellY = FMath::Clamp(CellY, 0, A.CellsY - 1);
     
-    const int32 SX = Item->bRotated ? Item->SizeY : Item->SizeX;
-    const int32 SY = Item->bRotated ? Item->SizeX : Item->SizeY;
+    int32 SX = Item->bRotated ? Item->SizeY : Item->SizeX;
+    int32 SY = Item->bRotated ? Item->SizeX : Item->SizeY;
     
     bool bFree = IsAreaFree(GridIndex, CellX, CellY, SX, SY, Item);
     int32 AutoX, AutoY;
@@ -820,4 +829,85 @@ void UInventoryWidget::NativeOnDragCancelled(const FDragDropEvent& InDragDropEve
     if (Highlight) { RightPanelRef->RemoveChild(Highlight); Highlight=nullptr; }
     DragItem = nullptr;
     bDragActive = false;
+}
+
+void UInventoryWidget::UpdateEquipmentSlots()
+{
+    if (!EquipmentPanelRef) return;
+    
+    // Очищаем существующие слоты
+    for (TObjectPtr<UWidget> Widget : EquipmentSlotWidgets)
+    {
+        if (Widget)
+        {
+            EquipmentPanelRef->RemoveChild(Widget);
+        }
+    }
+    EquipmentSlotWidgets.Empty();
+    
+    // Получаем компонент инвентаря персонажа
+    APlayerController* PC = GetOwningPlayer();
+    if (!PC) return;
+    
+    APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(PC->GetPawn());
+    if (!PlayerChar || !PlayerChar->InventoryComponent) return;
+    
+    UInventoryComponent* InvComp = PlayerChar->InventoryComponent;
+    
+    // Создаем слоты для каждого типа экипировки
+    TArray<EEquipmentSlotType> SlotTypes = {
+        EEquipmentSlotType::Helmet,
+        EEquipmentSlotType::Vest,
+        EEquipmentSlotType::Backpack,
+        EEquipmentSlotType::PrimaryWeapon,
+        EEquipmentSlotType::SecondaryWeapon
+    };
+    
+    for (int32 i = 0; i < SlotTypes.Num(); i++)
+    {
+        EEquipmentSlotType SlotType = SlotTypes[i];
+        UEquippableItemData* EquippedItem = InvComp->GetEquippedItem(SlotType);
+        CreateEquipmentSlotWidget(EquippedItem, i);
+    }
+}
+
+void UInventoryWidget::CreateEquipmentSlotWidget(const UEquippableItemData* Item, int32 SlotIndex)
+{
+    if (!EquipmentPanelRef) return;
+    
+    // Создаем контейнер для слота
+    UBorder* SlotContainer = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
+    SlotContainer->SetBrushColor(FLinearColor(0.2f, 0.2f, 0.2f, 0.8f));
+    
+    // Добавляем текст с названием слота
+    UTextBlock* SlotLabel = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+    TArray<FString> SlotNames = {"Голова", "Разгрузка", "Рюкзак", "Основное", "Вторичное"};
+    if (SlotIndex < SlotNames.Num())
+    {
+        SlotLabel->SetText(FText::FromString(SlotNames[SlotIndex]));
+    }
+    SlotLabel->SetColorAndOpacity(FLinearColor::White);
+    SlotContainer->AddChild(SlotLabel);
+    
+    // Если есть предмет в слоте, добавляем его иконку
+    if (Item && Item->Icon)
+    {
+        UImage* ItemIcon = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+        FSlateBrush Brush;
+        Brush.SetResourceObject(Item->Icon);
+        Brush.ImageSize = EquipmentSlotSize;
+        ItemIcon->SetBrush(Brush);
+        SlotContainer->AddChild(ItemIcon);
+    }
+    
+    // Добавляем слот в панель
+    if (UCanvasPanelSlot* CanvasSlot = EquipmentPanelRef->AddChildToCanvas(SlotContainer))
+    {
+        CanvasSlot->SetAnchors(FAnchors(0.f, 0.f, 0.f, 0.f));
+        CanvasSlot->SetAlignment(FVector2D(0.f, 0.f));
+        CanvasSlot->SetPosition(FVector2D(10.f, 10.f + SlotIndex * (EquipmentSlotSize.Y + 10.f)));
+        CanvasSlot->SetSize(EquipmentSlotSize);
+    }
+    
+    EquipmentSlotWidgets.Add(SlotContainer);
 }

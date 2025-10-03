@@ -13,6 +13,10 @@
 #include "Components/TextBlock.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupCube.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupParallelepiped.h"
+#include "BackToZaraysk/Inventory/EquippableItemData.h"
+#include "BackToZaraysk/Components/EquipmentComponent.h"
+#include "BackToZaraysk/Characters/PlayerCharacter.h"
+#include "BackToZaraysk/GameData/Items/TacticalVest.h"
 
 void UInventoryItemWidget::Init(UInventoryItemData* InData, UTexture2D* InIcon, const FVector2D& CellSize)
 {
@@ -60,11 +64,43 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
                 }
                 UBorder* Menu = Parent->WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("ContextMenu"));
                 Menu->SetBrushColor(FLinearColor(0.f,0.f,0.f,0.9f));
+                
+                if (GEngine)
+                {
+                    GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, 
+                        FString::Printf(TEXT("🔍 Creating context menu for item: %s"), 
+                            ItemData ? *ItemData->DisplayName.ToString() : TEXT("null")));
+                }
+                
+                // Кнопка "Надеть" для экипируемых предметов
+                UEquippableItemData* EquippableItem = Cast<UEquippableItemData>(ItemData);
+                if (ItemData && EquippableItem)
+                {
+                    UButton* EquipBtn = Parent->WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
+                    UTextBlock* EquipTxt = Parent->WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+                    EquipTxt->SetText(FText::FromString(TEXT("Надеть")));
+                    EquipBtn->AddChild(EquipTxt);
+                    Menu->AddChild(EquipBtn);
+                    
+                    // Привязываем функцию экипировки
+                    EquipBtn->OnClicked.AddDynamic(this, &UInventoryItemWidget::OnEquipClicked);
+                }
+                
+                // Кнопка "Выбросить"
                 UButton* DropBtn = Parent->WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
                 UTextBlock* Txt = Parent->WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
-                Txt->SetText(FText::FromString(TEXT("выбросить")));
+                Txt->SetText(FText::FromString(TEXT("Выбросить")));
+                Txt->SetColorAndOpacity(FLinearColor::White);
                 DropBtn->AddChild(Txt);
                 Menu->AddChild(DropBtn);
+                
+                // Привязываем функцию выброса
+                DropBtn->OnClicked.AddDynamic(this, &UInventoryItemWidget::OnDropClicked);
+                
+                if (GEngine)
+                {
+                    GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, TEXT("🔍 Added Drop button to context menu"));
+                }
                 if (UCanvasPanelSlot* S = Root->AddChildToCanvas(Menu))
                 {
                     const FVector2D ScreenPos = InMouseEvent.GetScreenSpacePosition();
@@ -72,7 +108,7 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
                     S->SetAnchors(FAnchors(0.f,0.f,0.f,0.f));
                     S->SetAlignment(FVector2D(0.f,0.f));
                     S->SetPosition(Local + FVector2D(6.f,6.f));
-                    S->SetSize(FVector2D(140.f, 40.f));
+                    S->SetSize(FVector2D(140.f, 80.f));
                     S->SetZOrder(9999);
                 }
                 DropBtn->OnClicked.AddDynamic(this, &UInventoryItemWidget::OnDropClicked);
@@ -111,6 +147,11 @@ void UInventoryItemWidget::OnDropClicked()
                             {
                                 DropClass = APickupParallelepiped::StaticClass();
                             }
+                            else if (ItemData->SizeInCellsX == 3 && ItemData->SizeInCellsY == 3)
+                            {
+                                // Для тактического жилета 3x3
+                                DropClass = ATacticalVest::StaticClass();
+                            }
                             if (UWorld* World = GetWorld())
                             {
                                 World->SpawnActor<AActor>(DropClass, SpawnLoc, ViewRot, S);
@@ -123,6 +164,83 @@ void UInventoryItemWidget::OnDropClicked()
             }
         }
         // Закрыть меню
+        if (UCanvasPanel* RootLocal = Cast<UCanvasPanel>(Parent->WidgetTree->RootWidget))
+        {
+            TArray<UWidget*> Children2 = RootLocal->GetAllChildren();
+            for (UWidget* W2 : Children2)
+            {
+                if (W2 && W2->GetFName() == TEXT("ContextMenu"))
+                {
+                    RootLocal->RemoveChild(W2);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+void UInventoryItemWidget::OnEquipClicked()
+{
+    if (!ItemData) 
+    {
+        if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ ItemData is null"));
+        return;
+    }
+    
+    UEquippableItemData* EquippableItem = Cast<UEquippableItemData>(ItemData);
+    if (!EquippableItem) 
+    {
+        if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
+            FString::Printf(TEXT("❌ ItemData is not UEquippableItemData. Class: %s"), 
+                ItemData ? *ItemData->GetClass()->GetName() : TEXT("null")));
+        return;
+    }
+    
+    // Получаем PlayerCharacter
+    if (UInventoryWidget* Parent = GetTypedOuter<UInventoryWidget>())
+    {
+        APlayerController* PC = Parent->GetOwningPlayer();
+        if (PC)
+        {
+            APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(PC->GetPawn());
+            if (PlayerChar && PlayerChar->InventoryComponent)
+            {
+                if (GEngine)
+                {
+                    GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+                        FString::Printf(TEXT("✅ PlayerCharacter found, InventoryComponent: %s"), 
+                            PlayerChar->InventoryComponent ? TEXT("OK") : TEXT("NULL")));
+                }
+                
+                UInventoryComponent* InvComp = PlayerChar->InventoryComponent;
+                
+                // Экипируем предмет
+                if (InvComp->EquipItemFromInventory(EquippableItem))
+                {
+                    if (GEngine)
+                    {
+                        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+                            FString::Printf(TEXT("✅ Экипировано: %s"), *EquippableItem->DisplayName.ToString()));
+                    }
+                    
+                    // Обновляем UI
+                    Parent->SyncBackpack(InvComp->BackpackItems);
+                }
+                else
+                {
+                    if (GEngine)
+                    {
+                        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
+                            TEXT("❌ Не удалось экипировать предмет"));
+                    }
+                }
+            }
+        }
+    }
+    
+    // Закрыть меню
+    if (UInventoryWidget* Parent = GetTypedOuter<UInventoryWidget>())
+    {
         if (UCanvasPanel* RootLocal = Cast<UCanvasPanel>(Parent->WidgetTree->RootWidget))
         {
             TArray<UWidget*> Children2 = RootLocal->GetAllChildren();
