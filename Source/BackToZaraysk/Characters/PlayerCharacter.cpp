@@ -53,6 +53,12 @@ void APlayerCharacter::MoveForward(float Value)
 {
 	if (!FMath::IsNearlyZero(Value, 1e-6f))
 	{
+		// КРИТИЧЕСКИ ВАЖНО: Блокировка движения во время лазания!
+		if (ObstacleClimbingComponent && ObstacleClimbingComponent->bIsClimbing)
+		{
+			return;
+		}
+		
 		// ИСПРАВЛЕНО: Полная блокировка движения во время стрейфа
 		if (StrafeComponent && StrafeComponent->bIsStrafing)
 		{
@@ -70,6 +76,12 @@ void APlayerCharacter::MoveRight(float Value)
 {
 	if (!FMath::IsNearlyZero(Value, 1e-6f))
 	{
+		// КРИТИЧЕСКИ ВАЖНО: Блокировка движения во время лазания!
+		if (ObstacleClimbingComponent && ObstacleClimbingComponent->bIsClimbing)
+		{
+			return;
+		}
+		
 		// ИСПРАВЛЕНО: Полная блокировка движения во время стрейфа
 		if (StrafeComponent && StrafeComponent->bIsStrafing)
 		{
@@ -84,11 +96,23 @@ void APlayerCharacter::MoveRight(float Value)
 }
 void APlayerCharacter::Turn(float Value)
 {
+	// КРИТИЧЕСКИ ВАЖНО: Блокируем поворот во время лазания!
+	if (ObstacleClimbingComponent && ObstacleClimbingComponent->bIsClimbing)
+	{
+		return;
+	}
+	
 	AddControllerYawInput(Value);
 }
 
 void APlayerCharacter::LookUp(float Value)
 {
+	// КРИТИЧЕСКИ ВАЖНО: Блокируем взгляд вверх/вниз во время лазания!
+	if (ObstacleClimbingComponent && ObstacleClimbingComponent->bIsClimbing)
+	{
+		return;
+	}
+	
 	AddControllerPitchInput(Value);
 }
 
@@ -204,23 +228,28 @@ void APlayerCharacter::Tick(float DeltaTime)
 	TryChangeSprintState(DeltaTime);
 	BTZBaseCharMovementComponent->GetMaxSpeed();
 	CameraMoveTimeline.TickTimeline(DeltaTime);
-    // Держим пивот камеры на голове каждый тик (стоя/сидя/лежа)
-    {
-        USkeletalMeshComponent* Skel = GetMesh();
-        if (Skel && Skel->DoesSocketExist(HeadSocketName))
-        {
-            const FTransform HeadWorld = Skel->GetSocketTransform(HeadSocketName, RTS_World);
-            const FVector PivotWorld = HeadWorld.GetLocation() + HeadOffset;
-            FVector PivotLocal = GetRootComponent()->GetComponentTransform().InverseTransformPosition(PivotWorld);
-            // добавляем боковое смещение для выглядывания (локальная ось Y = вправо)
-            PivotLocal += FVector(0.0f, CurrentLeanSideOffset, 0.0f);
-            SpringArmComponent->SetRelativeLocation(PivotLocal);
-            // и наклоняем камеру через Roll
-            FRotator RelRot = SpringArmComponent->GetRelativeRotation();
-            RelRot.Roll = CurrentLeanAngleDeg;
-            SpringArmComponent->SetRelativeRotation(RelRot);
-        }
-    }
+	
+	// КРИТИЧЕСКИ ВАЖНО: НЕ обновляем камеру во время лазания!
+	if (!ObstacleClimbingComponent || !ObstacleClimbingComponent->bIsClimbing)
+	{
+		// Держим пивот камеры на голове каждый тик (стоя/сидя/лежа)
+		{
+			USkeletalMeshComponent* Skel = GetMesh();
+			if (Skel && Skel->DoesSocketExist(HeadSocketName))
+			{
+				const FTransform HeadWorld = Skel->GetSocketTransform(HeadSocketName, RTS_World);
+				const FVector PivotWorld = HeadWorld.GetLocation() + HeadOffset;
+				FVector PivotLocal = GetRootComponent()->GetComponentTransform().InverseTransformPosition(PivotWorld);
+				// добавляем боковое смещение для выглядывания (локальная ось Y = вправо)
+				PivotLocal += FVector(0.0f, CurrentLeanSideOffset, 0.0f);
+				SpringArmComponent->SetRelativeLocation(PivotLocal);
+				// и наклоняем камеру через Roll
+				FRotator RelRot = SpringArmComponent->GetRelativeRotation();
+				RelRot.Roll = CurrentLeanAngleDeg;
+				SpringArmComponent->SetRelativeRotation(RelRot);
+			}
+		}
+	}
 
     // IK переменные управляются базовым классом - синхронизация не нужна
 
@@ -278,7 +307,7 @@ void APlayerCharacter::TryClimbObstacle()
         {
             GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Magenta, TEXT("PlayerCharacter: Calling obstacle climbing component"));
         }
-        ObstacleClimbingComponent->TryClimbObstacle();
+        ObstacleClimbingComponent->TryClimb();  // ИЗМЕНЕНО: TryClimb() вместо TryClimbObstacle()
     }
     else
     {

@@ -1,152 +1,175 @@
+// Fill out your copyright notice in the Description page of Project Settings.
+
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Components/TimelineComponent.h"
 #include "ObstacleClimbingComponent.generated.h"
 
+// Типы препятствий для преодоления
 UENUM(BlueprintType)
-enum class EObstacleClimbType : uint8
+enum class EObstacleType : uint8
 {
-    None,           // Нельзя преодолеть
-    Vault,          // Перепрыгивание через препятствие
-    Climb,          // Взбирание на препятствие
-    ClimbOver       // Взбирание и спуск за препятствие
+	None UMETA(DisplayName = "None"),
+	Vault UMETA(DisplayName = "Vault"),      // Перепрыгивание (низкие препятствия 50-120 см)
+	Mantle UMETA(DisplayName = "Mantle"),    // Подтягивание (средние препятствия 120-200 см)
+	Climb UMETA(DisplayName = "Climb")       // Лазание (высокие препятствия 200+ см)
 };
 
+// Информация об обнаруженном препятствии
 USTRUCT(BlueprintType)
-struct FObstacleInfo
+struct FObstacleData
 {
-    GENERATED_BODY()
+	GENERATED_BODY()
 
-    UPROPERTY(BlueprintReadOnly)
-    FVector ObstacleLocation;
+	UPROPERTY(BlueprintReadOnly)
+	EObstacleType Type = EObstacleType::None;
 
-    UPROPERTY(BlueprintReadOnly)
-    FVector ObstacleSize;
+	UPROPERTY(BlueprintReadOnly)
+	FVector ObstacleTop;        // Верхняя точка препятствия
 
-    UPROPERTY(BlueprintReadOnly)
-    float ObstacleHeight;
+	UPROPERTY(BlueprintReadOnly)
+	FVector ObstacleForward;    // Направление "через" препятствие
 
-    UPROPERTY(BlueprintReadOnly)
-    float ObstacleThickness;
+	UPROPERTY(BlueprintReadOnly)
+	float Height;               // Высота препятствия
 
-    UPROPERTY(BlueprintReadOnly)
-    EObstacleClimbType ClimbType;
+	UPROPERTY(BlueprintReadOnly)
+	float Thickness;            // Толщина препятствия
 
-    UPROPERTY(BlueprintReadOnly)
-    bool bCanClimb;
-
-    FObstacleInfo()
-    {
-        ObstacleLocation = FVector::ZeroVector;
-        ObstacleSize = FVector::ZeroVector;
-        ObstacleHeight = 0.0f;
-        ObstacleThickness = 0.0f;
-        ClimbType = EObstacleClimbType::None;
-        bCanClimb = false;
-    }
+	bool IsValid() const { return Type != EObstacleType::None; }
 };
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnClimbStarted, EObstacleType, ObstacleType);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnClimbCompleted);
+
+/**
+ * Компонент для преодоления препятствий с анимациями
+ * Простая и понятная архитектура с минимумом кастомной логики
+ */
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class BACKTOZARAYSK_API UObstacleClimbingComponent : public UActorComponent
 {
-    GENERATED_BODY()
+	GENERATED_BODY()
 
 public:
-    UObstacleClimbingComponent();
+	UObstacleClimbingComponent();
 
-    virtual void BeginPlay() override;
-    virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
-    // Попытка преодоления препятствия
-    UFUNCTION(BlueprintCallable, Category = "Obstacle Climbing")
-    bool TryClimbObstacle();
+	// Попытка преодолеть препятствие
+	UFUNCTION(BlueprintCallable, Category = "Obstacle Climbing")
+	bool TryClimb();
 
-    // Проверка препятствия перед персонажем
-    UFUNCTION(BlueprintCallable, Category = "Obstacle Climbing")
-    FObstacleInfo CheckObstacleAhead();
+	// Текущее состояние лазания
+	UPROPERTY(BlueprintReadOnly, Category = "Obstacle Climbing")
+	bool bIsClimbing = false;
 
-    // Настройки
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacle Climbing|Settings")
-    float DetectionDistance = 200.0f;
+	// Текущий тип препятствия
+	UPROPERTY(BlueprintReadOnly, Category = "Obstacle Climbing")
+	EObstacleType CurrentObstacleType = EObstacleType::None;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacle Climbing|Settings")
-    float DetectionHeight = 100.0f;
+	// Обнаружено ли препятствие впереди (обновляется каждый кадр)
+	UPROPERTY(BlueprintReadOnly, Category = "Obstacle Climbing")
+	bool bObstacleDetected = false;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacle Climbing|Settings")
-    float MaxClimbHeight = 200.0f; // Максимальная высота препятствия для преодоления
+	// Тип обнаруженного препятствия
+	UPROPERTY(BlueprintReadOnly, Category = "Obstacle Climbing")
+	EObstacleType DetectedObstacleType = EObstacleType::None;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacle Climbing|Settings")
-    float ThicknessThreshold = 30.0f; // Порог толщины для определения типа преодоления
+	// События
+	UPROPERTY(BlueprintAssignable, Category = "Obstacle Climbing")
+	FOnClimbStarted OnClimbStarted;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacle Climbing|Settings")
-    float HeightThreshold = 0.6f; // 60% роста игрока
-
-    // Скорости анимации
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacle Climbing|Animation")
-    float ApproachSpeed = 200.0f; // Еще медленнее
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacle Climbing|Animation")
-    float ClimbSpeed = 80.0f; // Очень плавно
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacle Climbing|Animation")
-    float VaultSpeed = 100.0f; // Очень плавно
-
-    // Настройки плавности
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacle Climbing|Animation")
-    float SmoothnessFactor = 2.0f; // Коэффициент плавности (больше = плавнее)
-
-    // Состояние
-    UPROPERTY(BlueprintReadOnly, Category = "Obstacle Climbing|State")
-    bool bIsClimbing = false;
-
-    UPROPERTY(BlueprintReadOnly, Category = "Obstacle Climbing|State")
-    EObstacleClimbType CurrentClimbType = EObstacleClimbType::None;
-
-    UPROPERTY(BlueprintReadOnly, Category = "Obstacle Climbing|State")
-    FObstacleInfo CurrentObstacle;
-
-    // События
-    DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnClimbStarted, EObstacleClimbType, ClimbType);
-    DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnClimbCompleted);
-    DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnClimbFailed);
-
-    UPROPERTY(BlueprintAssignable, Category = "Obstacle Climbing|Events")
-    FOnClimbStarted OnClimbStarted;
-
-    UPROPERTY(BlueprintAssignable, Category = "Obstacle Climbing|Events")
-    FOnClimbCompleted OnClimbCompleted;
-
-    UPROPERTY(BlueprintAssignable, Category = "Obstacle Climbing|Events")
-    FOnClimbFailed OnClimbFailed;
+	UPROPERTY(BlueprintAssignable, Category = "Obstacle Climbing")
+	FOnClimbCompleted OnClimbCompleted;
 
 protected:
-    // Владелец компонента
-    AActor* OwnerActor = nullptr;
+	virtual void BeginPlay() override;
 
-    // Текущая цель преодоления
-    FVector TargetLocation;
-    FVector StartLocation;
-    float ClimbProgress = 0.0f;
-    
-    // Таймер для отложенного включения коллизий
-    float CollisionRestoreTimer = 0.0f;
-    bool bWaitingForCollisionRestore = false;
+	// === НАСТРОЙКИ ОБНАРУЖЕНИЯ ===
+	
+	UPROPERTY(EditAnywhere, Category = "Detection")
+	float DetectionDistance = 150.0f;  // Дистанция обнаружения препятствий (оптимально 150 см)
 
-    // Внутренние методы
-    void StartClimbAnimation(const FObstacleInfo& Obstacle);
-    void UpdateClimbAnimation(float DeltaTime);
-    void CompleteClimb();
-    void CancelClimb();
+	UPROPERTY(EditAnywhere, Category = "Detection")
+	float MinObstacleHeight = 30.0f;   // Минимальная высота препятствия (30 см от пола)
 
-    // Проверка препятствия
-    bool IsValidObstacle(const FHitResult& HitResult) const;
-    FObstacleInfo AnalyzeObstacle(const FHitResult& HitResult) const;
-    EObstacleClimbType DetermineClimbType(const FObstacleInfo& Obstacle) const;
+	UPROPERTY(EditAnywhere, Category = "Detection")
+	float VaultMaxHeight = 110.0f;     // Максимальная высота для Vault (30-110 см)
 
-    // Анимация преодоления
-    void PerformVaultAnimation(float DeltaTime);
-    void PerformClimbAnimation(float DeltaTime);
-    void PerformClimbOverAnimation(float DeltaTime);
+	UPROPERTY(EditAnywhere, Category = "Detection")
+	float MantleMaxHeight = 200.0f;    // Максимальная высота для Mantle (100-200 см)
+
+	UPROPERTY(EditAnywhere, Category = "Detection")
+	float MaxClimbHeight = 220.0f;     // Максимальная высота для лазания (выше - невозможно)
+
+	UPROPERTY(EditAnywhere, Category = "Detection")
+	float MaxObstacleThickness = 100.0f; // Максимальная толщина препятствия
+
+	// === НАСТРОЙКИ АНИМАЦИИ ===
+	
+	UPROPERTY(EditAnywhere, Category = "Animation")
+	float VaultDuration = 0.8f;        // Длительность анимации Vault
+
+	UPROPERTY(EditAnywhere, Category = "Animation")
+	float MantleDuration = 1.2f;       // Длительность анимации Mantle
+
+	UPROPERTY(EditAnywhere, Category = "Animation")
+	float ClimbDuration = 1.5f;        // Длительность анимации Climb
+
+private:
+	// Владелец компонента
+	AActor* OwnerActor = nullptr;
+
+	// Текущие данные о препятствии
+	FObstacleData CurrentObstacle;
+
+	// Прогресс анимации (0.0 - 1.0)
+	float AnimationProgress = 0.0f;
+
+	// Стартовая позиция персонажа
+	FVector StartLocation;
+	FRotator StartRotation;
+
+	// Целевая позиция после преодоления
+	FVector TargetLocation;
+	FRotator TargetRotation;
+
+	// === ФУНКЦИИ ОБНАРУЖЕНИЯ ===
+	
+	// Обнаружение препятствия перед персонажем
+	FObstacleData DetectObstacle();
+
+	// Определение типа препятствия по его параметрам
+	EObstacleType DetermineObstacleType(float Height, float Thickness);
+
+	// === ФУНКЦИИ ВЫПОЛНЕНИЯ ЛАЗАНИЯ ===
+	
+	// Начало лазания
+	void StartClimbing(const FObstacleData& Obstacle);
+
+	// Обновление анимации лазания
+	void UpdateClimbing(float DeltaTime);
+
+	// Завершение лазания
+	void CompleteClimbing();
+
+	// Отмена лазания
+	void CancelClimbing();
+
+	// === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
+	
+	// Вычисление целевой позиции для типа препятствия
+	void CalculateTargetTransform(const FObstacleData& Obstacle);
+
+	// Блокировка управления персонажем
+	void DisablePlayerControl();
+
+	// Восстановление управления персонажем
+	void EnablePlayerControl();
+
+	// Плавная интерполяция позиции персонажа
+	FVector GetInterpolatedLocation(float Progress) const;
+	FRotator GetInterpolatedRotation(float Progress) const;
 };
