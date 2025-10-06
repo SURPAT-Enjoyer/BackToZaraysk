@@ -1,0 +1,22 @@
+Инструкция по запуску скрипта в Unreal Editor:
+
+1. Откройте Unreal Editor
+2. Нажмите Window → Developer Tools → Output Log
+3. В Output Log введите команду:
+
+exec(open('D:/BackToZaraysk/ue5/BackToZaraysk/BackToZaraysk/Content/Python/CreateTacticalVestAssets.py').read())
+
+4. Нажмите Enter
+
+Скрипт автоматически создаст:
+- Черную иконку 96x96 (T_VestIcon_Black_3x3)
+- Data Asset для жилета (DA_TacticalVest)
+- Blueprint актора (BP_TacticalVest)
+
+Все ассеты будут в:
+/Game/BackToZaraysk/Core/Items/Equipment/
+/Game/BackToZaraysk/Core/Items/Icons/
+
+
+
+
