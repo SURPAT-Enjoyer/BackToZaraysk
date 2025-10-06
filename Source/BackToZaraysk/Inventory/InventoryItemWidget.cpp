@@ -72,18 +72,35 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
                             ItemData ? *ItemData->DisplayName.ToString() : TEXT("null")));
                 }
                 
-                // Кнопка "Надеть" для экипируемых предметов
+                // Кнопки для экипируемых предметов
                 UEquippableItemData* EquippableItem = Cast<UEquippableItemData>(ItemData);
                 if (ItemData && EquippableItem)
                 {
-                    UButton* EquipBtn = Parent->WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
-                    UTextBlock* EquipTxt = Parent->WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
-                    EquipTxt->SetText(FText::FromString(TEXT("Надеть")));
-                    EquipBtn->AddChild(EquipTxt);
-                    Menu->AddChild(EquipBtn);
-                    
-                    // Привязываем функцию экипировки
-                    EquipBtn->OnClicked.AddDynamic(this, &UInventoryItemWidget::OnEquipClicked);
+                    // Проверяем, экипирован ли предмет
+                    if (EquippableItem->bIsEquipped)
+                    {
+                        // Кнопка "Снять" для экипированных предметов
+                        UButton* UnequipBtn = Parent->WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
+                        UTextBlock* UnequipTxt = Parent->WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+                        UnequipTxt->SetText(FText::FromString(TEXT("Снять")));
+                        UnequipBtn->AddChild(UnequipTxt);
+                        Menu->AddChild(UnequipBtn);
+                        
+                        // Привязываем функцию снятия экипировки
+                        UnequipBtn->OnClicked.AddDynamic(this, &UInventoryItemWidget::OnUnequipClicked);
+                    }
+                    else
+                    {
+                        // Кнопка "Надеть" для неэкипированных предметов
+                        UButton* EquipBtn = Parent->WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
+                        UTextBlock* EquipTxt = Parent->WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+                        EquipTxt->SetText(FText::FromString(TEXT("Надеть")));
+                        EquipBtn->AddChild(EquipTxt);
+                        Menu->AddChild(EquipBtn);
+                        
+                        // Привязываем функцию экипировки
+                        EquipBtn->OnClicked.AddDynamic(this, &UInventoryItemWidget::OnEquipClicked);
+                    }
                 }
                 
                 // Кнопка "Выбросить"
@@ -225,6 +242,7 @@ void UInventoryItemWidget::OnEquipClicked()
                     
                     // Обновляем UI
                     Parent->SyncBackpack(InvComp->BackpackItems);
+                    Parent->UpdateEquipmentSlots(); // Обновляем слоты экипировки
                 }
                 else
                 {
@@ -232,6 +250,77 @@ void UInventoryItemWidget::OnEquipClicked()
                     {
                         GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
                             TEXT("❌ Не удалось экипировать предмет"));
+                    }
+                }
+            }
+        }
+    }
+    
+    // Закрыть меню
+    if (UInventoryWidget* Parent = GetTypedOuter<UInventoryWidget>())
+    {
+        if (UCanvasPanel* RootLocal = Cast<UCanvasPanel>(Parent->WidgetTree->RootWidget))
+        {
+            TArray<UWidget*> Children2 = RootLocal->GetAllChildren();
+            for (UWidget* W2 : Children2)
+            {
+                if (W2 && W2->GetFName() == TEXT("ContextMenu"))
+                {
+                    RootLocal->RemoveChild(W2);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+void UInventoryItemWidget::OnUnequipClicked()
+{
+    if (!ItemData) 
+    {
+        if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ ItemData is null"));
+        return;
+    }
+    
+    UEquippableItemData* EquippableItem = Cast<UEquippableItemData>(ItemData);
+    if (!EquippableItem) 
+    {
+        if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
+            FString::Printf(TEXT("❌ ItemData is not UEquippableItemData. Class: %s"), 
+                ItemData ? *ItemData->GetClass()->GetName() : TEXT("null")));
+        return;
+    }
+    
+    // Получаем PlayerCharacter
+    if (UInventoryWidget* Parent = GetTypedOuter<UInventoryWidget>())
+    {
+        APlayerController* PC = Parent->GetOwningPlayer();
+        if (PC)
+        {
+            APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(PC->GetPawn());
+            if (PlayerChar && PlayerChar->InventoryComponent)
+            {
+                UInventoryComponent* InvComp = PlayerChar->InventoryComponent;
+                
+                // Снимаем предмет
+                if (InvComp->UnequipItemToInventory(EquippableItem->EquipmentSlot, false))
+                {
+                    if (GEngine)
+                    {
+                        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+                            FString::Printf(TEXT("✅ Снято: %s"), *EquippableItem->DisplayName.ToString()));
+                    }
+                    
+                    // Обновляем UI
+                    Parent->SyncBackpack(InvComp->BackpackItems);
+                    Parent->UpdateEquipmentSlots(); // Обновляем слоты экипировки
+                }
+                else
+                {
+                    if (GEngine)
+                    {
+                        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
+                            TEXT("❌ Не удалось снять предмет"));
                     }
                 }
             }

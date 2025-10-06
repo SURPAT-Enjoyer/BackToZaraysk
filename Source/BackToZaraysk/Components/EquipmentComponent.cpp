@@ -75,12 +75,27 @@ bool UEquipmentComponent::EquipItem(UEquippableItemData* ItemData)
     {
         GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
             FString::Printf(TEXT("✅ Экипировано: %s"), *ItemData->DisplayName.ToString()));
+        
+        // Дополнительная диагностика
+        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, 
+            FString::Printf(TEXT("🔧 EquipmentMeshComponents count: %d"), EquipmentMeshComponents.Num()));
+        
+        if (USkeletalMeshComponent** MeshPtr = EquipmentMeshComponents.Find(SlotType))
+        {
+            USkeletalMeshComponent* Mesh = *MeshPtr;
+            if (Mesh)
+            {
+                GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, 
+                    FString::Printf(TEXT("🔧 Mesh component exists: %s, Visible: %s"), 
+                        *Mesh->GetName(), Mesh->IsVisible() ? TEXT("Yes") : TEXT("No")));
+            }
+        }
     }
     
     return true;
 }
 
-bool UEquipmentComponent::UnequipItem(EEquipmentSlotType SlotType)
+bool UEquipmentComponent::UnequipItem(EEquipmentSlotType SlotType, bool bDropToWorld)
 {
     if (!IsSlotOccupied(SlotType))
     {
@@ -97,6 +112,19 @@ bool UEquipmentComponent::UnequipItem(EEquipmentSlotType SlotType)
     if (ItemData)
     {
         ItemData->bIsEquipped = false;
+        
+        // Если нужно выбросить в мир
+        if (bDropToWorld)
+        {
+            // TODO: Добавить логику выброса предмета в мир
+            // Пока что просто логируем
+            if (GEngine)
+            {
+                GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Orange, 
+                    FString::Printf(TEXT("🗑️ Предмет %s будет выброшен в мир"), 
+                        *ItemData->DisplayName.ToString()));
+            }
+        }
     }
     
     // Удаляем меш
@@ -152,6 +180,12 @@ USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquip
         return nullptr;
     }
     
+    if (!GetOwner())
+    {
+        if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ CreateEquipmentMeshComponent: Owner is null"));
+        return nullptr;
+    }
+    
     // Создаем новый компонент меша
     FString ComponentName = FString::Printf(TEXT("EquipmentMesh_%d"), (int32)SlotType);
     USkeletalMeshComponent* MeshComp = NewObject<USkeletalMeshComponent>(GetOwner(), FName(*ComponentName));
@@ -159,33 +193,151 @@ USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquip
     if (!MeshComp)
     {
         UE_LOG(LogTemp, Error, TEXT("EquipmentComponent: Failed to create mesh component"));
+        if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ Failed to create mesh component"));
         return nullptr;
+    }
+    
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+            FString::Printf(TEXT("🔧 Created mesh component: %s"), *ComponentName));
     }
     
     // Настраиваем компонент
     MeshComp->SetSkeletalMesh(ItemData->EquippedMesh);
-    MeshComp->SetLeaderPoseComponent(CharacterMesh); // Синхронизация со скелетом персонажа
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+            FString::Printf(TEXT("🔧 Set SkeletalMesh: %s"), 
+                ItemData->EquippedMesh ? *ItemData->EquippedMesh->GetName() : TEXT("NULL")));
+    }
+    
+    // Устанавливаем материал для лучшей видимости
+    MeshComp->SetMaterial(0, nullptr); // Используем материал по умолчанию
+
+    // Регистрируем компонент ПЕРЕД прикреплением
     MeshComp->RegisterComponent();
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, TEXT("🔧 Mesh component registered"));
+    }
     
     // Прикрепляем к персонажу
     if (ItemData->AttachSocketName != NAME_None && CharacterMesh->DoesSocketExist(ItemData->AttachSocketName))
     {
+        // Для скелетных мешей используем KeepWorldTransform для правильного прикрепления
         MeshComp->AttachToComponent(CharacterMesh, 
-            FAttachmentTransformRules::SnapToTargetNotIncludingScale, 
+            FAttachmentTransformRules::KeepWorldTransform, 
             ItemData->AttachSocketName);
+        
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+                FString::Printf(TEXT("🔧 Attached to socket: %s (skeletal attachment)"), 
+                    *ItemData->AttachSocketName.ToString()));
+        }
     }
     else
     {
-        // Если сокет не указан или не найден, прикрепляем к корню меша
+        // Прикрепляем к корню меша (к персонажу)
         MeshComp->AttachToComponent(CharacterMesh, 
-            FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+            FAttachmentTransformRules::KeepWorldTransform);
+        
+        if (GEngine)
+        {
+            if (ItemData->AttachSocketName == NAME_None)
+            {
+                GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+                    TEXT("🔧 Attached to character root (no socket)"));
+            }
+            else
+            {
+                GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, 
+                    FString::Printf(TEXT("⚠️ Socket '%s' not found, attached to root"), 
+                        *ItemData->AttachSocketName.ToString()));
+            }
+        }
+    }
+    
+    // Устанавливаем LeaderPoseComponent для прикрепления скелета к скелету
+    if (ItemData->AttachSocketName != NAME_None && CharacterMesh->DoesSocketExist(ItemData->AttachSocketName))
+    {
+        // Для жилетов и других предметов с скелетом - используем LeaderPoseComponent
+        MeshComp->SetLeaderPoseComponent(CharacterMesh);
+        
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+                TEXT("🔧 LeaderPoseComponent enabled - skeletal attachment"));
+        }
+    }
+    else
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, 
+                TEXT("⚠️ LeaderPoseComponent disabled - no valid socket"));
+        }
     }
     
     // Применяем относительный трансформ
     MeshComp->SetRelativeTransform(ItemData->RelativeTransform);
     
+    if (GEngine)
+    {
+        FTransform AppliedTransform = MeshComp->GetRelativeTransform();
+        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, 
+            FString::Printf(TEXT("🔧 Applied RelativeTransform: Loc(%.2f,%.2f,%.2f) Rot(%.2f,%.2f,%.2f) Scale(%.2f,%.2f,%.2f)"), 
+                AppliedTransform.GetLocation().X, AppliedTransform.GetLocation().Y, AppliedTransform.GetLocation().Z,
+                AppliedTransform.Rotator().Pitch, AppliedTransform.Rotator().Yaw, AppliedTransform.Rotator().Roll,
+                AppliedTransform.GetScale3D().X, AppliedTransform.GetScale3D().Y, AppliedTransform.GetScale3D().Z));
+    }
+    
     // Отключаем коллизию для экипированного предмета
     MeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    
+    // Принудительно делаем видимым
+    MeshComp->SetVisibility(true);
+    MeshComp->SetHiddenInGame(false);
+    
+    // Дополнительные настройки для гарантии видимости
+    MeshComp->SetVisibility(true);
+    MeshComp->MarkRenderStateDirty();
+    
+    // Принудительно обновляем трансформ
+    MeshComp->UpdateBounds();
+    MeshComp->MarkRenderTransformDirty();
+    
+    // Финальная диагностика
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+            FString::Printf(TEXT("✅ Mesh component created successfully for slot %d"), (int32)SlotType));
+        
+        // Проверяем видимость
+        if (MeshComp->IsVisible())
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, TEXT("✅ Mesh component is visible"));
+        }
+        else
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ Mesh component is not visible"));
+        }
+        
+        // Дополнительная диагностика трансформа
+        FTransform RelativeTransform = MeshComp->GetRelativeTransform();
+        FTransform WorldTransform = MeshComp->GetComponentTransform();
+        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, 
+            FString::Printf(TEXT("🔧 RelativeTransform: Location(%s), Rotation(%s), Scale(%s)"), 
+                *RelativeTransform.GetLocation().ToString(),
+                *RelativeTransform.GetRotation().Rotator().ToString(),
+                *RelativeTransform.GetScale3D().ToString()));
+        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, 
+            FString::Printf(TEXT("🌍 WorldTransform: Location(%s), Rotation(%s), Scale(%s)"), 
+                *WorldTransform.GetLocation().ToString(),
+                *WorldTransform.GetRotation().Rotator().ToString(),
+                *WorldTransform.GetScale3D().ToString()));
+    }
     
     UE_LOG(LogTemp, Log, TEXT("EquipmentComponent: Created mesh component for slot %d"), (int32)SlotType);
     

@@ -52,7 +52,19 @@ private:
     void StartStrafeSpace();
     void StopStrafeSpace();
 
+    // Свободное вращение камеры средней кнопкой мыши
+    void StartFreeLook();
+    void StopFreeLook();
+    void FreeLookX(float Value);
+    void FreeLookY(float Value);
+
 	TSoftObjectPtr<class ABTZBaseCharacter> CachedBaseCharacter;
+
+    // Переменные для свободного вращения головы персонажа
+    bool bIsFreeLooking = false;
+    FRotator HeadRotation;  // Текущая ротация головы
+    FRotator InitialHeadRotation;  // Начальная ротация головы
+    FRotator BodyRotation;  // Ротация тела (фиксированная во время FreeLook)
 
 protected:
 	UPROPERTY(EditDefaultsOnly, Category = "UI")

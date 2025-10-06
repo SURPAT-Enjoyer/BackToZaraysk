@@ -380,3 +380,61 @@ void ABTZBaseCharacter::TryClimbObstacle()
 	// Базовая реализация - ничего не делает
 	// Переопределяется в PlayerCharacter
 }
+
+void ABTZBaseCharacter::Turn(float Value)
+{
+	// Блокируем поворот если активен FreeLook
+	if (bRotationBlocked) return;
+	
+	// Стандартный поворот персонажа
+	AddControllerYawInput(Value);
+}
+
+void ABTZBaseCharacter::LookUp(float Value)
+{
+	// Блокируем поворот если активен FreeLook
+	if (bRotationBlocked) return;
+	
+	// Стандартный поворот камеры
+	AddControllerPitchInput(Value);
+}
+
+void ABTZBaseCharacter::SetRotationBlocked(bool bBlocked)
+{
+	bRotationBlocked = bBlocked;
+	
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Yellow, 
+			FString::Printf(TEXT("Character rotation %s"), bBlocked ? TEXT("BLOCKED") : TEXT("UNBLOCKED")));
+	}
+}
+
+void ABTZBaseCharacter::SetHeadRotation(float Yaw, float Pitch)
+{
+	// Сохраняем значения поворота головы в градусах
+	HeadYawRotation = Yaw;
+	HeadPitchRotation = Pitch;
+	
+	// Применяем поворот головы через Transform (Modify) Bone
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green, 
+			FString::Printf(TEXT("Head Rotation: Yaw=%.1f°, Pitch=%.1f°"), HeadYawRotation, HeadPitchRotation));
+		
+		// Дополнительная диагностика для Blueprint
+		GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Yellow, 
+			FString::Printf(TEXT("Blueprint Values: HeadYaw=%.3f, HeadPitch=%.3f"), HeadYawRotation, HeadPitchRotation));
+	}
+}
+
+void ABTZBaseCharacter::ResetHeadRotation()
+{
+	HeadYawRotation = 0.0f;
+	HeadPitchRotation = 0.0f;
+	
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green, TEXT("Head rotation reset"));
+	}
+}

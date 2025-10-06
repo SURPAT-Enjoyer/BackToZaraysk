@@ -22,6 +22,12 @@ ABTZPlayerController::ABTZPlayerController()
 {
     // Используем C++ класс напрямую вместо Blueprint
     InventoryWidgetClass = UInventoryWidget::StaticClass();
+    
+    // Инициализация переменных свободного вращения головы
+    bIsFreeLooking = false;
+    HeadRotation = FRotator::ZeroRotator;
+    InitialHeadRotation = FRotator::ZeroRotator;
+    BodyRotation = FRotator::ZeroRotator;
 }
 
 void ABTZPlayerController::RequestToggleInventory()
@@ -64,6 +70,10 @@ void ABTZPlayerController::SetupInputComponent()
     InputComponent->BindAction("StrafeRight", EInputEvent::IE_Released, this, &ABTZPlayerController::StopStrafeRight);
     InputComponent->BindAction("StrafeSpace", EInputEvent::IE_Pressed, this, &ABTZPlayerController::StartStrafeSpace);
     InputComponent->BindAction("StrafeSpace", EInputEvent::IE_Released, this, &ABTZPlayerController::StopStrafeSpace);
+    
+    // Свободное вращение камеры средней кнопкой мыши
+    InputComponent->BindAction("FreeLook", EInputEvent::IE_Pressed, this, &ABTZPlayerController::StartFreeLook);
+    InputComponent->BindAction("FreeLook", EInputEvent::IE_Released, this, &ABTZPlayerController::StopFreeLook);
 }
 void ABTZPlayerController::Interact()
 {
@@ -85,14 +95,66 @@ void ABTZPlayerController::Interact()
                 if (Pickup->ItemClass)
                 {
                     // Безопасное создание объекта из класса
-                    Data = Cast<UInventoryItemData>(NewObject<UObject>(this, Pickup->ItemClass));
+                    UObject* NewObj = NewObject<UObject>(this, Pickup->ItemClass);
+                    Data = Cast<UInventoryItemData>(NewObj);
+                    
                     if (GEngine)
                     {
                         GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, 
                             FString::Printf(TEXT("🔍 Pickup ItemClass: %s, Created Object: %s"), 
                                 *Pickup->ItemClass->GetName(),
-                                Data ? *Data->GetClass()->GetName() : TEXT("null")));
+                                NewObj ? *NewObj->GetClass()->GetName() : TEXT("null")));
+                    }
+                    
+                    // Если это тактический жилет, загружаем данные из Data Asset
+                    if (Cast<ATacticalVest>(Pickup))
+                    {
+                        FString DataAssetPath = TEXT("/Game/BackToZaraysk/Core/Items/Equipment/DA_TacticalVest.DA_TacticalVest");
+                        UObject* LoadedDataAsset = LoadObject<UObject>(nullptr, *DataAssetPath);
                         
+                        if (LoadedDataAsset)
+                        {
+                            if (UEquippableItemData* SourceData = Cast<UEquippableItemData>(LoadedDataAsset))
+                            {
+                                if (UEquippableItemData* EquipData = Cast<UEquippableItemData>(Data))
+                                {
+                                    // Копируем все свойства из Data Asset
+                                    EquipData->DisplayName = SourceData->DisplayName;
+                                    EquipData->SizeInCellsX = SourceData->SizeInCellsX;
+                                    EquipData->SizeInCellsY = SourceData->SizeInCellsY;
+                                    EquipData->EquipmentSlot = SourceData->EquipmentSlot;
+                                    // Перезаписываем сокет на правильный
+                                    EquipData->AttachSocketName = FName(TEXT("spine_02"));
+                                    EquipData->EquippedMesh = SourceData->EquippedMesh;
+                                    // Перезаписываем трансформ на правильный
+                                    EquipData->RelativeTransform = FTransform(
+                                        FRotator(0.0f, 0.0f, 0.0f),
+                                        FVector(5.0f, 0.0f, -2.0f),
+                                        FVector(1.0f, 1.0f, 1.0f)
+                                    );
+                                    EquipData->bRotatable = SourceData->bRotatable;
+                                    
+                                    if (GEngine)
+                                    {
+                                        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+                                            FString::Printf(TEXT("🔧 Data Asset properties copied! EquippedMesh: %s"), 
+                                                EquipData->EquippedMesh ? TEXT("SET") : TEXT("NULL")));
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            if (GEngine)
+                            {
+                                GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
+                                    TEXT("❌ Failed to load Data Asset from path!"));
+                            }
+                        }
+                    }
+                    
+                    if (GEngine)
+                    {
                         // Проверяем, является ли это экипируемым предметом
                         if (UEquippableItemData* EquipData = Cast<UEquippableItemData>(Data))
                         {
@@ -120,25 +182,52 @@ void ABTZPlayerController::Interact()
                         
                         if (LoadedDataAsset)
                         {
-                            // Копируем данные из Data Asset
-                            Data = Cast<UInventoryItemData>(NewObject<UObject>(this, LoadedDataAsset->GetClass()));
+                            // Создаем новый экземпляр на основе загруженного Data Asset
+                            UObject* NewObj = NewObject<UObject>(this, LoadedDataAsset->GetClass());
+                            Data = Cast<UInventoryItemData>(NewObj);
+                            
                             if (UEquippableItemData* SourceData = Cast<UEquippableItemData>(LoadedDataAsset))
                             {
                                 if (UEquippableItemData* EquipData = Cast<UEquippableItemData>(Data))
                                 {
+                                    // Копируем все свойства из Data Asset
                                     EquipData->DisplayName = SourceData->DisplayName;
                                     EquipData->SizeInCellsX = SourceData->SizeInCellsX;
                                     EquipData->SizeInCellsY = SourceData->SizeInCellsY;
                                     EquipData->EquipmentSlot = SourceData->EquipmentSlot;
-                                    EquipData->AttachSocketName = SourceData->AttachSocketName;
+                                    // Перезаписываем сокет на правильный
+                                    EquipData->AttachSocketName = FName(TEXT("spine_02"));
                                     EquipData->EquippedMesh = SourceData->EquippedMesh;
+                                    // Перезаписываем трансформ на правильный
+                                    EquipData->RelativeTransform = FTransform(
+                                        FRotator(0.0f, 0.0f, 0.0f),
+                                        FVector(5.0f, 0.0f, -2.0f),
+                                        FVector(1.0f, 1.0f, 1.0f)
+                                    );
                                     EquipData->bRotatable = SourceData->bRotatable;
+                                    
+                                    if (GEngine)
+                                    {
+                                        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+                                            FString::Printf(TEXT("🔧 Loaded Data Asset: %s, EquippedMesh: %s, Slot: %d"), 
+                                                *EquipData->DisplayName.ToString(),
+                                                EquipData->EquippedMesh ? TEXT("SET") : TEXT("NULL"),
+                                                (int32)EquipData->EquipmentSlot));
+                                        
+                                        // Дополнительная диагностика
+                                        if (EquipData->EquippedMesh)
+                                        {
+                                            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+                                                FString::Printf(TEXT("✅ EquippedMesh name: %s"), 
+                                                    *EquipData->EquippedMesh->GetName()));
+                                        }
+                                        else
+                                        {
+                                            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
+                                                TEXT("❌ EquippedMesh is NULL in Data Asset!"));
+                                        }
+                                    }
                                 }
-                            }
-                            if (GEngine)
-                            {
-                                GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
-                                    TEXT("🔧 Loaded Data Asset for TacticalVest"));
                             }
                         }
                         else
@@ -151,14 +240,35 @@ void ABTZPlayerController::Interact()
                                 EquipData->SizeInCellsX = 3;
                                 EquipData->SizeInCellsY = 3;
                                 EquipData->EquipmentSlot = EEquipmentSlotType::Vest;
-                                EquipData->AttachSocketName = FName(TEXT("spine_03"));
+                                EquipData->AttachSocketName = FName(TEXT("spine_02"));
                                 EquipData->bRotatable = false;
-                                // EquippedMesh остается null - нужно будет установить вручную
+                                
+                                // Попытаемся загрузить меш вручную
+                                FString MeshPath = TEXT("/Game/insurgent_2/Characters/SK_ChestRigSmall.SK_ChestRigSmall");
+                                USkeletalMesh* VestMesh = LoadObject<USkeletalMesh>(nullptr, *MeshPath);
+                                if (VestMesh)
+                                {
+                                    EquipData->EquippedMesh = VestMesh;
+                                    if (GEngine)
+                                    {
+                                        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+                                            FString::Printf(TEXT("✅ Manually loaded EquippedMesh: %s"), 
+                                                *VestMesh->GetName()));
+                                    }
+                                }
+                                else
+                                {
+                                    if (GEngine)
+                                    {
+                                        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
+                                            FString::Printf(TEXT("❌ Failed to load mesh from path: %s"), *MeshPath));
+                                    }
+                                }
                             }
                             if (GEngine)
                             {
                                 GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, 
-                                    TEXT("⚠️ Data Asset not found, created UEquippableItemData manually (EquippedMesh will be null)"));
+                                    TEXT("⚠️ Data Asset not found, created UEquippableItemData manually"));
                             }
                         }
                     }
@@ -258,6 +368,14 @@ void ABTZPlayerController::MoveRight(float Value)
 
 void ABTZPlayerController::Turn(float Value)
 {
+	if (bIsFreeLooking) 
+	{
+		// FreeLook имеет приоритет - обрабатываем как свободное вращение камеры
+		FreeLookX(Value);
+		return;
+	}
+	
+	// Обычное вращение персонажа
 	if (ensure(CachedBaseCharacter.IsValid()))
 	{
 		CachedBaseCharacter->Turn(Value);
@@ -266,6 +384,14 @@ void ABTZPlayerController::Turn(float Value)
 
 void ABTZPlayerController::LookUp(float Value)
 {
+	if (bIsFreeLooking) 
+	{
+		// FreeLook имеет приоритет - обрабатываем как свободное вращение камеры
+		FreeLookY(Value);
+		return;
+	}
+	
+	// Обычное вращение камеры
 	if (ensure(CachedBaseCharacter.IsValid()))
 	{
 		CachedBaseCharacter->LookUp(Value);
@@ -535,4 +661,128 @@ void ABTZPlayerController::StopStrafeSpace()
             PC->HandleSpaceInput(false);
         }
     }
+}
+
+// Свободное вращение камеры средней кнопкой мыши
+void ABTZPlayerController::StartFreeLook()
+{
+    if (bIsFreeLooking) return;
+    
+    bIsFreeLooking = true;
+    
+    // Инициализируем поворот головы
+    if (CachedBaseCharacter.IsValid())
+    {
+        // Запоминаем текущую ротацию камеры как базовую
+        BodyRotation = GetControlRotation();
+        
+        // Сбрасываем поворот головы
+        CachedBaseCharacter->ResetHeadRotation();
+        
+        // Блокируем поворот тела
+        CachedBaseCharacter->SetRotationBlocked(true);
+        
+        // Отключаем поворот персонажа на уровне движения
+        if (UCharacterMovementComponent* CharMovement = CachedBaseCharacter->GetCharacterMovement())
+        {
+            CharMovement->bOrientRotationToMovement = false;
+            CharMovement->bUseControllerDesiredRotation = false;
+        }
+    }
+    
+    // Инициализируем переменные поворота головы
+    HeadRotation = FRotator::ZeroRotator;
+    InitialHeadRotation = FRotator::ZeroRotator;
+    
+    // Блокируем стандартное управление камерой
+    SetIgnoreLookInput(true);
+    SetIgnoreMoveInput(false); // Движение разрешено
+    
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Cyan, TEXT("FreeLook: Started - Head rotation only"));
+    }
+}
+
+void ABTZPlayerController::StopFreeLook()
+{
+    if (!bIsFreeLooking) return;
+    
+    bIsFreeLooking = false;
+    
+    // Восстанавливаем стандартное управление
+    SetIgnoreLookInput(false);
+    
+    // Снимаем блокировку на уровне персонажа
+    if (CachedBaseCharacter.IsValid())
+    {
+        CachedBaseCharacter->SetRotationBlocked(false);
+        
+        // Сбрасываем поворот головы
+        CachedBaseCharacter->ResetHeadRotation();
+        
+        // Восстанавливаем настройки движения персонажа
+        if (UCharacterMovementComponent* CharMovement = CachedBaseCharacter->GetCharacterMovement())
+        {
+            CharMovement->bOrientRotationToMovement = true;
+            CharMovement->bUseControllerDesiredRotation = true;
+        }
+    }
+    
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Cyan, TEXT("FreeLook: Stopped - Head reset to body"));
+    }
+}
+
+void ABTZPlayerController::FreeLookX(float Value)
+{
+    if (!bIsFreeLooking) return;
+    
+    // Горизонтальное вращение головы для Transform (Modify) Bone (в градусах)
+    HeadRotation.Yaw += Value * 2.0f; // Чувствительность поворота головы
+    
+    // Ограничиваем поворот головы влево/вправо (±120 градусов)
+    HeadRotation.Yaw = FMath::Clamp(HeadRotation.Yaw, -120.0f, 120.0f);
+    
+    // Применяем поворот головы через Transform (Modify) Bone
+    if (CachedBaseCharacter.IsValid())
+    {
+        CachedBaseCharacter->SetHeadRotation(HeadRotation.Yaw, HeadRotation.Pitch);
+    }
+    
+    // Обновляем камеру - она должна следовать за головой
+    // Поворачиваем камеру на HeadRotation относительно BodyRotation
+    FRotator CombinedRotation = FRotator(
+        BodyRotation.Pitch + HeadRotation.Pitch,
+        BodyRotation.Yaw + HeadRotation.Yaw,
+        BodyRotation.Roll + HeadRotation.Roll
+    );
+    SetControlRotation(CombinedRotation);
+}
+
+void ABTZPlayerController::FreeLookY(float Value)
+{
+    if (!bIsFreeLooking) return;
+    
+    // Вертикальное вращение головы для Transform (Modify) Bone (в градусах)
+    HeadRotation.Pitch -= Value * 2.0f; // Чувствительность наклона головы
+    
+    // Ограничиваем наклон головы вверх/вниз (±60 градусов)
+    HeadRotation.Pitch = FMath::Clamp(HeadRotation.Pitch, -60.0f, 60.0f);
+    
+    // Применяем поворот головы через Transform (Modify) Bone
+    if (CachedBaseCharacter.IsValid())
+    {
+        CachedBaseCharacter->SetHeadRotation(HeadRotation.Yaw, HeadRotation.Pitch);
+    }
+    
+    // Обновляем камеру - она должна следовать за головой
+    // Поворачиваем камеру на HeadRotation относительно BodyRotation
+    FRotator CombinedRotation = FRotator(
+        BodyRotation.Pitch + HeadRotation.Pitch,
+        BodyRotation.Yaw + HeadRotation.Yaw,
+        BodyRotation.Roll + HeadRotation.Roll
+    );
+    SetControlRotation(CombinedRotation);
 }

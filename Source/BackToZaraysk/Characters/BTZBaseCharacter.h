@@ -19,8 +19,16 @@ public:
 
 	virtual void MoveForward(float Value) {};
 	virtual void MoveRight(float Value) {};
-	virtual void Turn(float Value) {};
-	virtual void LookUp(float Value) {};
+	virtual void Turn(float Value);
+	virtual void LookUp(float Value);
+	
+	// Функции для блокировки поворота при FreeLook
+	void SetRotationBlocked(bool bBlocked);
+	bool IsRotationBlocked() const { return bRotationBlocked; }
+	
+	// Функции для управления поворотом головы
+	void SetHeadRotation(float Yaw, float Pitch);
+	void ResetHeadRotation();
 	virtual void ChangeCrouchState();
 	virtual void ChangeProneState();
 	virtual void StartSprint();
@@ -83,6 +91,17 @@ protected:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character|Stamina", meta = (AllowPrivateAccess = "true"))
 	float StaminaCanSprintAndJumpThreshold = 50.0f;
+
+    // Блокировка поворота для FreeLook
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character|FreeLook", meta = (AllowPrivateAccess = "true"))
+    bool bRotationBlocked = false;
+    
+    // Управление поворотом головы для FreeLook (Transform Modify Bone)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character|FreeLook", meta = (AllowPrivateAccess = "true"))
+    float HeadYawRotation = 0.0f;  // Поворот головы влево/вправо (в градусах)
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character|FreeLook", meta = (AllowPrivateAccess = "true"))
+    float HeadPitchRotation = 0.0f;  // Наклон головы вверх/вниз (в градусах)
 
 	// Duplicate prone state removed; rely on movement component's IsProning()
 

@@ -73,13 +73,21 @@ bool UInventoryComponent::EquipItemFromInventory(UEquippableItemData* Item)
 		// Удаляем из инвентаря и добавляем в слот
 		RemoveSpecificFromBackpack(Item);
 		EquipmentSlots.Add(Item->EquipmentSlot, Item);
+		
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+				FString::Printf(TEXT("🔧 Added to EquipmentSlots: Slot %d, Total slots: %d"), 
+					(int32)Item->EquipmentSlot, EquipmentSlots.Num()));
+		}
+		
 		return true;
 	}
 
 	return false;
 }
 
-bool UInventoryComponent::UnequipItemToInventory(EEquipmentSlotType SlotType)
+bool UInventoryComponent::UnequipItemToInventory(EEquipmentSlotType SlotType, bool bDropToWorld)
 {
 	// Проверяем, занят ли слот
 	UEquippableItemData** ItemPtr = EquipmentSlots.Find(SlotType);
@@ -107,11 +115,17 @@ bool UInventoryComponent::UnequipItemToInventory(EEquipmentSlotType SlotType)
 	}
 
 	// Снимаем предмет
-	if (EquipComp->UnequipItem(SlotType))
+	if (EquipComp->UnequipItem(SlotType, bDropToWorld))
 	{
-		// Удаляем из слота и добавляем в инвентарь
+		// Удаляем из слота
 		EquipmentSlots.Remove(SlotType);
-		AddToBackpack(Item);
+		
+		// Если не выбрасываем в мир, добавляем в инвентарь
+		if (!bDropToWorld)
+		{
+			AddToBackpack(Item);
+		}
+		
 		return true;
 	}
 

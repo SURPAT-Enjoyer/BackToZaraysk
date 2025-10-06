@@ -74,6 +74,18 @@ void UInventoryWidget::NativeOnInitialized()
                 RightSlot->SetSize(FVector2D(560.f, 760.f));
             }
             RightPanelRef = RightPanel;
+            
+            // Создаем панель для слотов экипировки
+            UCanvasPanel* EquipmentPanel = WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), TEXT("EquipmentPanel"));
+            if (UCanvasPanelSlot* EquipmentSlot = Canvas->AddChildToCanvas(EquipmentPanel))
+            {
+                EquipmentSlot->SetAnchors(FAnchors(0.5f, 0.5f, 0.5f, 0.5f));
+                EquipmentSlot->SetAlignment(FVector2D(0.5f, 0.5f));
+                EquipmentSlot->SetPosition(FVector2D(0.f, 0.f));
+                EquipmentSlot->SetSize(FVector2D(400.f, 600.f));
+                EquipmentSlot->SetZOrder(10);
+            }
+            EquipmentPanelRef = EquipmentPanel;
 
             // Силуэт человека слева. Добавляем под слоты (низкий Z), чтобы не менять их позиционирование
             {
@@ -833,42 +845,9 @@ void UInventoryWidget::NativeOnDragCancelled(const FDragDropEvent& InDragDropEve
 
 void UInventoryWidget::UpdateEquipmentSlots()
 {
-    if (!EquipmentPanelRef) return;
-    
-    // Очищаем существующие слоты
-    for (TObjectPtr<UWidget> Widget : EquipmentSlotWidgets)
-    {
-        if (Widget)
-        {
-            EquipmentPanelRef->RemoveChild(Widget);
-        }
-    }
-    EquipmentSlotWidgets.Empty();
-    
-    // Получаем компонент инвентаря персонажа
-    APlayerController* PC = GetOwningPlayer();
-    if (!PC) return;
-    
-    APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(PC->GetPawn());
-    if (!PlayerChar || !PlayerChar->InventoryComponent) return;
-    
-    UInventoryComponent* InvComp = PlayerChar->InventoryComponent;
-    
-    // Создаем слоты для каждого типа экипировки
-    TArray<EEquipmentSlotType> SlotTypes = {
-        EEquipmentSlotType::Helmet,
-        EEquipmentSlotType::Vest,
-        EEquipmentSlotType::Backpack,
-        EEquipmentSlotType::PrimaryWeapon,
-        EEquipmentSlotType::SecondaryWeapon
-    };
-    
-    for (int32 i = 0; i < SlotTypes.Num(); i++)
-    {
-        EEquipmentSlotType SlotType = SlotTypes[i];
-        UEquippableItemData* EquippedItem = InvComp->GetEquippedItem(SlotType);
-        CreateEquipmentSlotWidget(EquippedItem, i);
-    }
+    // Отключаем создание дублирующих слотов - они не нужны
+    if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, TEXT("🔧 UpdateEquipmentSlots called - slots disabled"));
+    return;
 }
 
 void UInventoryWidget::CreateEquipmentSlotWidget(const UEquippableItemData* Item, int32 SlotIndex)
@@ -879,9 +858,9 @@ void UInventoryWidget::CreateEquipmentSlotWidget(const UEquippableItemData* Item
     UBorder* SlotContainer = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
     SlotContainer->SetBrushColor(FLinearColor(0.2f, 0.2f, 0.2f, 0.8f));
     
-    // Добавляем текст с названием слота
+    // Добавляем текст с названием слота (используем явный шрифт с поддержкой кириллицы)
     UTextBlock* SlotLabel = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
-    TArray<FString> SlotNames = {"Голова", "Разгрузка", "Рюкзак", "Основное", "Вторичное"};
+    TArray<FString> SlotNames = {TEXT("Голова"), TEXT("Разгрузка"), TEXT("Рюкзак"), TEXT("Основное"), TEXT("Вторичное")};
     if (SlotIndex < SlotNames.Num())
     {
         SlotLabel->SetText(FText::FromString(SlotNames[SlotIndex]));
@@ -905,7 +884,7 @@ void UInventoryWidget::CreateEquipmentSlotWidget(const UEquippableItemData* Item
     {
         CanvasSlot->SetAnchors(FAnchors(0.f, 0.f, 0.f, 0.f));
         CanvasSlot->SetAlignment(FVector2D(0.f, 0.f));
-        CanvasSlot->SetPosition(FVector2D(10.f, 10.f + SlotIndex * (EquipmentSlotSize.Y + 10.f)));
+        CanvasSlot->SetPosition(FVector2D(BackpackGridSize.X + 20.f, 10.f + SlotIndex * (EquipmentSlotSize.Y + 10.f)));
         CanvasSlot->SetSize(EquipmentSlotSize);
     }
     

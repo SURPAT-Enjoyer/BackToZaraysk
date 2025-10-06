@@ -38,7 +38,7 @@ public:
 
 	// Снять предмет в инвентарь
 	UFUNCTION(BlueprintCallable, Category="Equipment")
-	bool UnequipItemToInventory(EEquipmentSlotType SlotType);
+	bool UnequipItemToInventory(EEquipmentSlotType SlotType, bool bDropToWorld = false);
 
 	// Получить экипированный предмет
 	UFUNCTION(BlueprintCallable, Category="Equipment")

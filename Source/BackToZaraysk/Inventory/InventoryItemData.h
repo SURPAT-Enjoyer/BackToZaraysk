@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "Engine/DataAsset.h"
 #include "InventoryItemData.generated.h"
 
 UENUM(BlueprintType)
@@ -10,11 +10,13 @@ enum class EInventoryItemType : uint8
 	Generic UMETA(DisplayName = "Generic")
 };
 
-UCLASS(BlueprintType)
-class BACKTOZARAYSK_API UInventoryItemData : public UObject
+UCLASS(BlueprintType, Blueprintable)
+class BACKTOZARAYSK_API UInventoryItemData : public UDataAsset
 {
 	GENERATED_BODY()
+	
 public:
+	UInventoryItemData();
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Item")
 	EInventoryItemType ItemType = EInventoryItemType::Generic;
 

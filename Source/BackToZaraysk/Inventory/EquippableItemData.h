@@ -8,7 +8,7 @@
 /**
  * Данные экипируемого предмета
  */
-UCLASS(BlueprintType, Blueprintable)
+UCLASS(BlueprintType, Blueprintable, meta=(DisplayName="Equippable Item Data"))
 class BACKTOZARAYSK_API UEquippableItemData : public UInventoryItemData
 {
     GENERATED_BODY()

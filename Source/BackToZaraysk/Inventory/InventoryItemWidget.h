@@ -48,6 +48,9 @@ protected:
 
     UFUNCTION()
     void OnEquipClicked();
+    
+    UFUNCTION()
+    void OnUnequipClicked();
 };
 
 
