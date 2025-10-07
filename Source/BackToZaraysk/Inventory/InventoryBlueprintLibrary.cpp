@@ -62,19 +62,19 @@ FText UInventoryBlueprintLibrary::GetEquipmentSlotName(EEquipmentSlotType SlotTy
 {
     switch (SlotType)
     {
-        case EEquipmentSlotType::None:
+        case None:
             return FText::FromString(TEXT("Нет"));
-        case EEquipmentSlotType::Helmet:
+        case Helmet:
             return FText::FromString(TEXT("Шлем"));
-        case EEquipmentSlotType::Vest:
+        case Vest:
             return FText::FromString(TEXT("Разгрузка"));
-        case EEquipmentSlotType::Backpack:
+        case Backpack:
             return FText::FromString(TEXT("Рюкзак"));
-        case EEquipmentSlotType::PrimaryWeapon:
+        case PrimaryWeapon:
             return FText::FromString(TEXT("Основное оружие"));
-        case EEquipmentSlotType::SecondaryWeapon:
+        case SecondaryWeapon:
             return FText::FromString(TEXT("Запасное оружие"));
-        case EEquipmentSlotType::Melee:
+        case Melee:
             return FText::FromString(TEXT("Холодное оружие"));
         default:
             return FText::FromString(TEXT("Неизвестно"));

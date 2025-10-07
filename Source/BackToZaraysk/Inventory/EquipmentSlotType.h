@@ -7,7 +7,7 @@
  * Типы слотов экипировки
  */
 UENUM(BlueprintType)
-enum class EEquipmentSlotType : uint8
+enum EEquipmentSlotType : uint8
 {
     None            UMETA(DisplayName = "Нет"),
     Helmet          UMETA(DisplayName = "Шлем"),

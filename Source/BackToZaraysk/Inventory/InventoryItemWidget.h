@@ -30,10 +30,14 @@ public:
 
     UPROPERTY()
     bool bRotated = false;
+    
+    UPROPERTY()
+    bool bIsStaticEquipmentSlot = false; // Флаг для виджетов в статических слотах экипировки
 
     void Init(UInventoryItemData* InData, UTexture2D* InIcon, const FVector2D& CellSize);
     void UpdateVisualSize(const FVector2D& CellSize);
     void SetTint(const FLinearColor& Color);
+    void SetStaticEquipmentSlot(bool bStatic) { bIsStaticEquipmentSlot = bStatic; }
 
 protected:
     virtual void NativeConstruct() override;

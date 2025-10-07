@@ -18,7 +18,7 @@ public:
     
     // Тип слота экипировки
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment")
-    EEquipmentSlotType EquipmentSlot = EEquipmentSlotType::None;
+    TEnumAsByte<EEquipmentSlotType> EquipmentSlot;
     
     // Меш для отображения на персонаже
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment|Visual")
@@ -35,6 +35,14 @@ public:
     // Экипирован ли предмет в данный момент
     UPROPERTY(BlueprintReadOnly, Category="Equipment|State")
     bool bIsEquipped = false;
+    
+    // Размер дополнительного грида для хранения предметов (например, карманы жилета)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment|Storage", meta=(EditCondition="bHasAdditionalStorage"))
+    FIntPoint AdditionalGridSize = FIntPoint(0, 0);
+    
+    // Есть ли дополнительный грид для хранения предметов
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment|Storage")
+    bool bHasAdditionalStorage = false;
 };
 
 /**

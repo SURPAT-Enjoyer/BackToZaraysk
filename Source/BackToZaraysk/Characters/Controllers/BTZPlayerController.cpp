@@ -239,7 +239,7 @@ void ABTZPlayerController::Interact()
                                 EquipData->DisplayName = FText::FromString(TEXT("Тактический жилет"));
                                 EquipData->SizeInCellsX = 3;
                                 EquipData->SizeInCellsY = 3;
-                                EquipData->EquipmentSlot = EEquipmentSlotType::Vest;
+                                EquipData->EquipmentSlot = Vest;
                                 EquipData->AttachSocketName = FName(TEXT("spine_02"));
                                 EquipData->bRotatable = false;
                                 

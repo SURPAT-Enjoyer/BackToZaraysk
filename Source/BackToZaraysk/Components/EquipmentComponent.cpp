@@ -2,6 +2,7 @@
 #include "BackToZaraysk/Inventory/EquippableItemData.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/Character.h"
+#include "Engine/SkeletalMesh.h"
 
 UEquipmentComponent::UEquipmentComponent()
 {
@@ -260,15 +261,16 @@ USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquip
     }
     
     // Устанавливаем LeaderPoseComponent для прикрепления скелета к скелету
-    if (ItemData->AttachSocketName != NAME_None && CharacterMesh->DoesSocketExist(ItemData->AttachSocketName))
+    // Для тактического жилета всегда используем LeaderPoseComponent
+    if (ItemData->EquippedMesh)
     {
-        // Для жилетов и других предметов с скелетом - используем LeaderPoseComponent
+        // Используем LeaderPoseComponent для скелетных мешей
         MeshComp->SetLeaderPoseComponent(CharacterMesh);
         
         if (GEngine)
         {
             GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
-                TEXT("🔧 LeaderPoseComponent enabled - skeletal attachment"));
+                TEXT("🔧 LeaderPoseComponent enabled for skeletal mesh"));
         }
     }
     else
@@ -276,7 +278,7 @@ USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquip
         if (GEngine)
         {
             GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, 
-                TEXT("⚠️ LeaderPoseComponent disabled - no valid socket"));
+                TEXT("⚠️ LeaderPoseComponent disabled - no EquippedMesh"));
         }
     }
     

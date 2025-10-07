@@ -1,10 +1,12 @@
 #include "EquippableItemData.h"
+#include "Engine/Engine.h"
+#include "Engine/SkeletalMesh.h"
 
 UEquippableItemData::UEquippableItemData()
 {
     // Значения по умолчанию уже установлены в заголовочном файле
     // ItemType наследуется от UInventoryItemData
-    // EquipmentSlot = EEquipmentSlotType::None по умолчанию
+    // EquipmentSlot = None по умолчанию
 }
 
 UTacticalVestItemData::UTacticalVestItemData()
@@ -12,9 +14,26 @@ UTacticalVestItemData::UTacticalVestItemData()
     DisplayName = FText::FromString(TEXT("Тактический жилет"));
     SizeInCellsX = 3;
     SizeInCellsY = 3;
-    EquipmentSlot = EEquipmentSlotType::Vest;
+    EquipmentSlot = Vest;
     AttachSocketName = FName(TEXT("spine_02")); // Прикрепляем к кости груди
     bRotatable = false; // Жилет нельзя вращать
+    
+    // Настройки дополнительного хранилища (грид как на картинке: 1+2+2+2+2+1)
+    bHasAdditionalStorage = true;
+    AdditionalGridSize = FIntPoint(6, 2); // 6 колонок, 2 ряда
+    
+    // Загружаем меш тактического жилета
+    FString MeshPath = TEXT("/Game/insurgent_2/Characters/SK_ChestRigSmall.SK_ChestRigSmall");
+    EquippedMesh = LoadObject<USkeletalMesh>(nullptr, *MeshPath);
+    
+    if (EquippedMesh)
+    {
+        UE_LOG(LogTemp, Log, TEXT("UTacticalVestItemData: Successfully loaded EquippedMesh: %s"), *EquippedMesh->GetName());
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("UTacticalVestItemData: Failed to load EquippedMesh from path: %s"), *MeshPath);
+    }
     
     // Устанавливаем относительный трансформ для тактического жилета
     // Поворачиваем жилет вертикально и на 90 градусов

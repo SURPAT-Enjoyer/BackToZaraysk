@@ -18,6 +18,10 @@ public:
 	// Простой рюкзак: список предметов
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Inventory")
 	TArray<TObjectPtr<UInventoryItemData>> BackpackItems;
+	
+	// Карта для сохранения позиций предметов при экипировке
+	UPROPERTY()
+	TMap<TObjectPtr<UInventoryItemData>, int32> ItemPositions;
 
 	UFUNCTION(BlueprintCallable, Category="Inventory")
 	bool AddToBackpack(UInventoryItemData* Item);
@@ -27,10 +31,17 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Inventory")
 	bool RemoveSpecificFromBackpack(UInventoryItemData* Item);
+	
+	// Функция для восстановления предмета на исходной позиции
+	UFUNCTION(BlueprintCallable, Category="Inventory")
+	bool RestoreItemToPosition(UInventoryItemData* Item);
 
 	// Слоты экипировки
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Equipment Slots")
-	TMap<EEquipmentSlotType, UEquippableItemData*> EquipmentSlots;
+	TMap<TEnumAsByte<EEquipmentSlotType>, UEquippableItemData*> EquipmentSlots;
+	
+	// Дополнительные инвентари для экипированных предметов (например, карманы жилета)
+	TMap<TObjectPtr<UEquippableItemData>, TArray<TObjectPtr<UInventoryItemData>>> EquipmentStorage;
 
 	// Экипировать предмет из инвентаря
 	UFUNCTION(BlueprintCallable, Category="Equipment")
@@ -39,6 +50,16 @@ public:
 	// Снять предмет в инвентарь
 	UFUNCTION(BlueprintCallable, Category="Equipment")
 	bool UnequipItemToInventory(EEquipmentSlotType SlotType, bool bDropToWorld = false);
+	
+	// Функции для работы с дополнительными инвентарями экипировки
+	UFUNCTION(BlueprintCallable, Category="Equipment Storage")
+	bool AddToEquipmentStorage(UEquippableItemData* Equipment, UInventoryItemData* Item);
+	
+	UFUNCTION(BlueprintCallable, Category="Equipment Storage")
+	bool RemoveFromEquipmentStorage(UEquippableItemData* Equipment, UInventoryItemData* Item);
+	
+	UFUNCTION(BlueprintCallable, Category="Equipment Storage")
+	TArray<UInventoryItemData*> GetEquipmentStorageItems(UEquippableItemData* Equipment);
 
 	// Получить экипированный предмет
 	UFUNCTION(BlueprintCallable, Category="Equipment")

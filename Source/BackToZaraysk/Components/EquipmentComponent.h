@@ -42,11 +42,11 @@ protected:
 private:
     // Карта экипированных предметов: Слот -> ItemData
     UPROPERTY()
-    TMap<EEquipmentSlotType, UEquippableItemData*> EquippedItems;
+    TMap<TEnumAsByte<EEquipmentSlotType>, UEquippableItemData*> EquippedItems;
     
     // Карта компонентов мешей: Слот -> SkeletalMeshComponent
     UPROPERTY()
-    TMap<EEquipmentSlotType, USkeletalMeshComponent*> EquipmentMeshComponents;
+    TMap<TEnumAsByte<EEquipmentSlotType>, USkeletalMeshComponent*> EquipmentMeshComponents;
     
     // Ссылка на меш персонажа
     UPROPERTY()

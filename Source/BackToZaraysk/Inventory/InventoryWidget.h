@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "BackToZaraysk/Inventory/EquipmentSlotType.h"
 #include "InventoryWidget.generated.h"
 
 class UInventoryItemWidget;
@@ -37,7 +38,27 @@ public:
     
     // Функции для слотов экипировки
     void UpdateEquipmentSlots();
-    void CreateEquipmentSlotWidget(const class UEquippableItemData* Item, int32 SlotIndex);
+    void CreateEquipmentSlotWidget(const class UEquippableItemData* Item, int32 SlotIndex, const FString& SlotName, EEquipmentSlotType SlotType);
+    void UpdateStaticEquipmentSlots(); // Обновляем статические слоты в левой панели
+    
+    // Функции для проверки границ грида
+    bool IsPositionValidInBackpack(int32 X, int32 Y, int32 SizeX, int32 SizeY) const;
+    FVector2D FindValidPositionInBackpack(class UInventoryItemData* ItemData) const;
+    
+    // Функция для очистки позиции предмета из системы drag & drop
+    void ClearItemPosition(class UInventoryItemData* ItemData);
+    
+    // Функции для грида жилета
+    void CreateVestGrid();
+    void DestroyVestGrid();
+    void UpdateVestGrid();
+    void AddVestGridItemIcon(class UInventoryItemData* ItemData, int32 Index);
+    
+    // Drag&Drop для грида жилета
+    bool CanDropOnVestGrid(const FGeometry& Geometry, const FVector2D& ScreenPosition) const;
+    bool HandleVestGridDrop(class UInventoryItemData* ItemData, const FVector2D& Position);
+    bool HandleVestGridItemDrag(class UInventoryItemData* ItemData);
+    FVector2D GetVestGridCellPosition(int32 CellX, int32 CellY) const;
 
 private:
 	bool bShown = false;
@@ -55,6 +76,13 @@ protected:
     FVector2D BackpackCellSize = FVector2D(60.f, 60.f);
     UPROPERTY()
     TArray<TObjectPtr<class UWidget>> BackpackIconWidgets;
+    
+    // Система отслеживания занятых ячеек
+    TArray<TArray<bool>> OccupiedCells; // Двумерный массив занятых ячеек
+    void InitializeOccupiedCells();
+    void MarkCellsAsOccupied(int32 X, int32 Y, int32 SizeX, int32 SizeY);
+    void MarkCellsAsFree(int32 X, int32 Y, int32 SizeX, int32 SizeY);
+    bool AreCellsFree(int32 X, int32 Y, int32 SizeX, int32 SizeY) const;
 
     // Слоты экипировки
     UPROPERTY(BlueprintReadOnly)
@@ -62,6 +90,23 @@ protected:
     FVector2D EquipmentSlotSize = FVector2D(80.f, 80.f);
     UPROPERTY()
     TArray<TObjectPtr<class UWidget>> EquipmentSlotWidgets;
+    
+    // Ссылки на статические слоты экипировки в левой панели
+    UPROPERTY()
+    class UBorder* VestSlotRef = nullptr; // Ссылка на слот "разгрузка"
+    UPROPERTY()
+    class UInventoryItemWidget* VestItemWidgetRef = nullptr; // Ссылка на виджет предмета в слоте разгрузки
+    
+    // Гриды жилета (6 отдельных гридов)
+    UPROPERTY()
+    TArray<class UCanvasPanel*> VestGrids;
+    
+    // Размеры гридов жилета
+    UPROPERTY()
+    TArray<FVector2D> VestGridSizes;
+    
+    // Занятые ячейки гридов жилета (6 гридов)
+    TArray<TArray<TArray<bool>>> VestOccupiedCells;
     // Связь данных предмета с его виджетом для сохранения положения между открытиями
     UPROPERTY(BlueprintReadOnly)
     TMap<TObjectPtr<class UInventoryItemData>, TObjectPtr<class UInventoryItemWidget>> ItemToWidget;
