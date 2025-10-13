@@ -20,9 +20,9 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment")
     TEnumAsByte<EEquipmentSlotType> EquipmentSlot;
     
-    // Меш для отображения на персонаже
+    // Меш для отображения на персонаже (может быть SkeletalMesh или StaticMesh)
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment|Visual")
-    USkeletalMesh* EquippedMesh = nullptr;
+    UObject* EquippedMesh = nullptr;
     
     // Имя сокета для прикрепления к персонажу
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment|Visual")
@@ -43,6 +43,10 @@ public:
     // Есть ли дополнительный грид для хранения предметов
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment|Storage")
     bool bHasAdditionalStorage = false;
+
+    // Персистентное содержимое хранилища предмета (живёт вместе с самим ItemData)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment|Storage")
+    TArray<TObjectPtr<class UInventoryItemData>> PersistentStorage;
 };
 
 /**
@@ -55,5 +59,17 @@ class BACKTOZARAYSK_API UTacticalVestItemData : public UEquippableItemData
     
 public:
     UTacticalVestItemData();
+};
+
+/**
+ * Данные рюкзака 8x6
+ */
+UCLASS(BlueprintType, Blueprintable, meta=(DisplayName="Backpack Item Data"))
+class BACKTOZARAYSK_API UBackpackItemData : public UEquippableItemData
+{
+    GENERATED_BODY()
+    
+public:
+    UBackpackItemData();
 };
 

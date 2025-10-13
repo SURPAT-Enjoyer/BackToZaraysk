@@ -64,6 +64,24 @@ public:
 	// Получить экипированный предмет
 	UFUNCTION(BlueprintCallable, Category="Equipment")
 	UEquippableItemData* GetEquippedItem(EEquipmentSlotType SlotType) const;
+	
+	// Синхронизировать состояние с EquipmentComponent
+	UFUNCTION(BlueprintCallable, Category="Equipment")
+	bool SyncWithEquipmentComponent();
+
+    // Новая логика подбора: попытаться экипировать или поместить в хранилища по приоритету
+    UFUNCTION(BlueprintCallable, Category="Inventory")
+    bool TryPickupItem(UInventoryItemData* Item);
+
+private:
+    // Простейшие хранилища пояса и карманов (гриды фиксированного размера)
+    FIntPoint BeltGridSize = FIntPoint(8, 2);
+    FIntPoint PocketsGridSize = FIntPoint(4, 1);
+    TArray<TObjectPtr<UInventoryItemData>> BeltStorageItems;
+    TArray<TObjectPtr<UInventoryItemData>> PocketsStorageItems;
+
+    bool HasSpaceInGridLike(const FIntPoint& GridSize, const TArray<TObjectPtr<UInventoryItemData>>& Items, int32 ItemSizeX, int32 ItemSizeY) const;
+    bool AddToGridLike(TArray<TObjectPtr<UInventoryItemData>>& Items, const FIntPoint& GridSize, UInventoryItemData* Item);
 };
 
 

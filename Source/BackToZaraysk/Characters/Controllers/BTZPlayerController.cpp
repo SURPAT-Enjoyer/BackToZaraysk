@@ -11,6 +11,7 @@
 #include "BackToZaraysk/GameData/Items/Test/PickupBase.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupCube.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupParallelepiped.h"
+#include "BackToZaraysk/GameData/Items/Test/PickupBackpack.h"
 #include "BackToZaraysk/GameData/Items/TacticalVest.h"
 #include "BackToZaraysk/Inventory/EquippableItemData.h"
 #include "UObject/ConstructorHelpers.h"
@@ -106,8 +107,16 @@ void ABTZPlayerController::Interact()
                                 NewObj ? *NewObj->GetClass()->GetName() : TEXT("null")));
                     }
                     
-                    // Если это тактический жилет, загружаем данные из Data Asset
-                    if (Cast<ATacticalVest>(Pickup))
+                    // Единая логика подбора с приоритетами
+                    if (Inv->TryPickupItem(Data))
+                    {
+                        if (InventoryWidgetInstance)
+                        {
+                            InventoryWidgetInstance->RefreshInventoryUI();
+                        }
+                        Pickup->Destroy();
+                        return;
+                    }
                     {
                         FString DataAssetPath = TEXT("/Game/BackToZaraysk/Core/Items/Equipment/DA_TacticalVest.DA_TacticalVest");
                         UObject* LoadedDataAsset = LoadObject<UObject>(nullptr, *DataAssetPath);
@@ -488,12 +497,12 @@ void ABTZPlayerController::ToggleInventory()
             SetShowMouseCursor(true);
             // Гарантируем, что во вьюпорте включён показ UI в PIE
             ConsoleCommand(TEXT("showflag.ui 1"), true);
-            // Синхронизация содержимого рюкзака в UI
+            // Принудительный рефреш UI инвентаря
             if (CachedBaseCharacter.IsValid())
             {
                 if (UInventoryComponent* Inv = CachedBaseCharacter->FindComponentByClass<UInventoryComponent>())
                 {
-                    InventoryWidgetInstance->SyncBackpack(Inv->BackpackItems);
+                    InventoryWidgetInstance->RefreshInventoryUI();
                 }
             }
             if (GEngine)

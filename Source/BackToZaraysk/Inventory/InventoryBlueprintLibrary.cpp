@@ -4,6 +4,9 @@
 #include "BackToZaraysk/Characters/PlayerCharacter.h"
 #include "BackToZaraysk/Components/EquipmentComponent.h"
 #include "BackToZaraysk/GameData/Items/TacticalVest.h"
+#include "BackToZaraysk/GameData/Items/Test/PickupBackpack.h"
+#include "BackToZaraysk/GameData/Items/Test/PickupParallelepiped.h"
+#include "BackToZaraysk/GameData/Items/Test/PickupCube.h"
 #include "Kismet/GameplayStatics.h"
 
 bool UInventoryBlueprintLibrary::EquipItemOnPlayer(UObject* WorldContextObject, UEquippableItemData* Item)
@@ -137,6 +140,51 @@ APlayerCharacter* UInventoryBlueprintLibrary::GetPlayerCharacter(UObject* WorldC
     }
     
     return Cast<APlayerCharacter>(PC->GetPawn());
+}
+
+// Внутренний C++-хелпер для использования из нативного кода
+TSubclassOf<AActor> GetPickupClassForItem_Internal(const UInventoryItemData* ItemData)
+{
+    if (!ItemData)
+    {
+        return APickupCube::StaticClass();
+    }
+    if (const UEquippableItemData* Eq = Cast<UEquippableItemData>(ItemData))
+    {
+        switch (Eq->EquipmentSlot)
+        {
+            case Vest: return ATacticalVest::StaticClass();
+            case Backpack: return APickupBackpack::StaticClass();
+            default: break;
+        }
+    }
+    if (ItemData->SizeInCellsX == 2 && ItemData->SizeInCellsY == 1)
+    {
+        return APickupParallelepiped::StaticClass();
+    }
+    return APickupCube::StaticClass();
+}
+
+TSubclassOf<AActor> UInventoryBlueprintLibrary::GetPickupClassForItem(const UInventoryItemData* ItemData)
+{
+    if (!ItemData)
+    {
+        return APickupCube::StaticClass();
+    }
+    if (const UEquippableItemData* Eq = Cast<UEquippableItemData>(ItemData))
+    {
+        switch (Eq->EquipmentSlot)
+        {
+            case Vest: return ATacticalVest::StaticClass();
+            case Backpack: return APickupBackpack::StaticClass();
+            default: break;
+        }
+    }
+    if (ItemData->SizeInCellsX == 2 && ItemData->SizeInCellsY == 1)
+    {
+        return APickupParallelepiped::StaticClass();
+    }
+    return APickupCube::StaticClass();
 }
 
 

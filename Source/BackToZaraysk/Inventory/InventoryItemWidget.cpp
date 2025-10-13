@@ -11,6 +11,8 @@
 #include "Components/Border.h"
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
+#include "Components/VerticalBox.h"
+#include "Components/VerticalBoxSlot.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupCube.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupParallelepiped.h"
 #include "BackToZaraysk/Inventory/EquippableItemData.h"
@@ -41,6 +43,8 @@ void UInventoryItemWidget::NativeConstruct()
 {
     Super::NativeConstruct();
     bIsFocusable = true; // позволяем ловить R на виджете предмета
+    SetVisibility(ESlateVisibility::Visible);
+    SetIsEnabled(true);
 }
 
 FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
@@ -64,6 +68,7 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
                 }
                 UBorder* Menu = Parent->WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("ContextMenu"));
                 Menu->SetBrushColor(FLinearColor(0.f,0.f,0.f,0.9f));
+                Menu->SetPadding(FMargin(8.f));
                 
                 if (GEngine)
                 {
@@ -72,6 +77,10 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
                             ItemData ? *ItemData->DisplayName.ToString() : TEXT("null")));
                 }
                 
+                // Контейнер для вертикального стека кнопок
+                UVerticalBox* VBox = Parent->WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("ContextMenuVBox"));
+                Menu->SetContent(VBox);
+
                 // Кнопки для экипируемых предметов
                 UEquippableItemData* EquippableItem = Cast<UEquippableItemData>(ItemData);
                 if (ItemData && EquippableItem)
@@ -79,40 +88,46 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
                     // Проверяем, экипирован ли предмет
                     if (EquippableItem->bIsEquipped)
                     {
-                        // Кнопка "Снять" для экипированных предметов
+                        // Снять
                         UButton* UnequipBtn = Parent->WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
                         UTextBlock* UnequipTxt = Parent->WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
                         UnequipTxt->SetText(FText::FromString(TEXT("Снять")));
                         UnequipBtn->AddChild(UnequipTxt);
-                        Menu->AddChild(UnequipBtn);
-                        
-                        // Привязываем функцию снятия экипировки
+                        VBox->AddChildToVerticalBox(UnequipBtn);
+                        // Для рюкзака в слоте делаем кнопку неактивной и визуально тусклой
+                        if (EquippableItem->EquipmentSlot == Backpack)
+                        {
+                            UnequipBtn->SetIsEnabled(false);
+                            UnequipBtn->SetRenderOpacity(0.5f);
+                            UnequipTxt->SetColorAndOpacity(FLinearColor(0.6f, 0.6f, 0.6f, 0.7f));
+                        }
+                        UnequipBtn->OnClicked.Clear();
                         UnequipBtn->OnClicked.AddDynamic(this, &UInventoryItemWidget::OnUnequipClicked);
                     }
                     else
                     {
-                        // Кнопка "Надеть" для неэкипированных предметов
+                        // Надеть
                         UButton* EquipBtn = Parent->WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
                         UTextBlock* EquipTxt = Parent->WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
                         EquipTxt->SetText(FText::FromString(TEXT("Надеть")));
                         EquipBtn->AddChild(EquipTxt);
-                        Menu->AddChild(EquipBtn);
-                        
-                        // Привязываем функцию экипировки
+                        VBox->AddChildToVerticalBox(EquipBtn);
+                        EquipBtn->OnClicked.Clear();
                         EquipBtn->OnClicked.AddDynamic(this, &UInventoryItemWidget::OnEquipClicked);
                     }
                 }
                 
                 // Кнопка "Выбросить"
+                {
                 UButton* DropBtn = Parent->WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
                 UTextBlock* Txt = Parent->WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
-                Txt->SetText(FText::FromString(TEXT("Выбросить")));
-                Txt->SetColorAndOpacity(FLinearColor::White);
+                    Txt->SetText(FText::FromString(TEXT("Выбросить")));
+                    Txt->SetColorAndOpacity(FLinearColor::White);
                 DropBtn->AddChild(Txt);
-                Menu->AddChild(DropBtn);
-                
-                // Привязываем функцию выброса
-                DropBtn->OnClicked.AddDynamic(this, &UInventoryItemWidget::OnDropClicked);
+                    VBox->AddChildToVerticalBox(DropBtn);
+                    DropBtn->OnClicked.Clear();
+                    DropBtn->OnClicked.AddDynamic(this, &UInventoryItemWidget::OnDropClicked);
+                }
                 
                 if (GEngine)
                 {
@@ -125,16 +140,16 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
                     S->SetAnchors(FAnchors(0.f,0.f,0.f,0.f));
                     S->SetAlignment(FVector2D(0.f,0.f));
                     S->SetPosition(Local + FVector2D(6.f,6.f));
-                    S->SetSize(FVector2D(140.f, 80.f));
+                    S->SetSize(FVector2D(220.f, 200.f));
                     S->SetZOrder(9999);
                 }
-                DropBtn->OnClicked.AddDynamic(this, &UInventoryItemWidget::OnDropClicked);
             }
         }
         return FReply::Handled();
     }
     if (Button == EKeys::LeftMouseButton)
     {
+        // Запускаем drag через DetectDragIfPressed (он вызовет NativeOnDragDetected)
         return UWidgetBlueprintLibrary::DetectDragIfPressed(InMouseEvent, this, EKeys::LeftMouseButton).NativeReply;
     }
     return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
@@ -154,6 +169,21 @@ void UInventoryItemWidget::OnDropClicked()
         
         UInventoryComponent* InvComp = PlayerChar->InventoryComponent;
         bool bItemRemoved = false;
+
+        // Если предмет экипирован и это рюкзак — снимаем и выбрасываем в мир
+        if (UEquippableItemData* EquippableItem = Cast<UEquippableItemData>(ItemData))
+        {
+            if (EquippableItem->bIsEquipped && EquippableItem->EquipmentSlot == Backpack)
+            {
+                if (InvComp->UnequipItemToInventory(Backpack, true))
+                {
+                    bItemRemoved = true;
+                    // Обновляем UI экипировки и грид рюкзака
+                    Parent->UpdateEquipmentSlots();
+                    Parent->UpdateBackpackStorageGrid();
+                }
+            }
+        }
         
         // Проверяем, экипирован ли предмет
         UEquippableItemData* EquippableItem = Cast<UEquippableItemData>(ItemData);
@@ -188,28 +218,21 @@ void UInventoryItemWidget::OnDropClicked()
         {
             // Спавним предмет перед игроком
             FVector ViewLoc; FRotator ViewRot; PC->GetPlayerViewPoint(ViewLoc, ViewRot);
-            const FVector SpawnLoc = ViewLoc + ViewRot.Vector() * 80.f;
+                            const FVector SpawnLoc = ViewLoc + ViewRot.Vector() * 80.f;
             FActorSpawnParameters S; 
             S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
             
-            TSubclassOf<AActor> DropClass = APickupCube::StaticClass();
-            if (ItemData->SizeInCellsX == 2 && ItemData->SizeInCellsY == 1)
-            {
-                DropClass = APickupParallelepiped::StaticClass();
-            }
-            else if (ItemData->SizeInCellsX == 3 && ItemData->SizeInCellsY == 3)
-            {
-                // Для тактического жилета 3x3
-                DropClass = ATacticalVest::StaticClass();
+                            // Определяем Pickup-класс через единый маппер
+                            extern TSubclassOf<AActor> GetPickupClassForItem_Internal(const UInventoryItemData* ItemData);
+                            TSubclassOf<AActor> DropClass = GetPickupClassForItem_Internal(ItemData);
+            
+                            if (UWorld* World = GetWorld())
+                            {
+                                World->SpawnActor<AActor>(DropClass, SpawnLoc, ViewRot, S);
             }
             
-            if (UWorld* World = GetWorld())
-            {
-                World->SpawnActor<AActor>(DropClass, SpawnLoc, ViewRot, S);
-            }
-            
-            // Обновляем UI
-            Parent->SyncBackpack(InvComp->BackpackItems);
+            // Обновляем UI (принудительно)
+            Parent->RefreshInventoryUI();
             
             // Удаляем виджет предмета
             Parent->RemoveItemWidget(this);
@@ -282,12 +305,31 @@ void UInventoryItemWidget::OnEquipClicked()
                     // Обновляем UI
                     Parent->SyncBackpack(InvComp->BackpackItems);
                     
-                    // Принудительно обновляем грид жилета после экипировки
-                    Parent->UpdateVestGrid();
-                    if (GEngine)
+                    // Принудительно обновляем гриды после экипировки (с небольшой задержкой)
+                    FTimerHandle TimerHandleEquip;
+                    UInventoryWidget* ParentWidgetEquip = Parent;
+                    GetWorld()->GetTimerManager().SetTimer(TimerHandleEquip, [ParentWidgetEquip, EquippableItem]()
                     {
-                        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, TEXT("🔄 Принудительно обновлен грид жилета после экипировки"));
-                    }
+                        if (ParentWidgetEquip)
+                        {
+                            if (EquippableItem->EquipmentSlot == Vest)
+                            {
+                                ParentWidgetEquip->UpdateVestGrid();
+                                if (GEngine)
+                                {
+                                    GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, TEXT("🔄 Принудительно обновлен грид жилета после экипировки"));
+                                }
+                            }
+                            else if (EquippableItem->EquipmentSlot == Backpack)
+                            {
+                                // Backpack grid removed - no longer needed
+                                if (GEngine)
+                                {
+                                    GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, TEXT("🔄 Рюкзак экипирован (грид удален)"));
+                                }
+                            }
+                        }
+                    }, 0.1f, false);
                 }
                 else
                 {
@@ -376,14 +418,58 @@ void UInventoryItemWidget::OnUnequipClicked()
                             FString::Printf(TEXT("🔍 Item bIsEquipped flag: %s"), EquippableItem->bIsEquipped ? TEXT("true") : TEXT("false")));
                     }
                     
-                    // Обновляем UI
-                    Parent->SyncBackpack(InvComp->BackpackItems);
-                    
-                    // Принудительно обновляем грид жилета после снятия
-                    Parent->UpdateVestGrid();
-                    if (GEngine)
+                    // Принудительно очищаем соответствующие UI зоны
+                    if (EquippableItem->EquipmentSlot == Vest)
                     {
-                        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, TEXT("🔄 Принудительно обновлен грид жилета после снятия"));
+                        if (GEngine)
+                        {
+                            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("🗑️ Снят жилет - принудительно очищаем гриды"));
+                        }
+                        Parent->ForceClearVestGrids();
+                    }
+                    else if (EquippableItem->EquipmentSlot == Backpack)
+                    {
+                        // Для рюкзака: принудительно прячем/удаляем его грид
+                        if (GEngine)
+                        {
+                            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("🗑️ Снят рюкзак - скрываем грид хранилища"));
+                        }
+                        Parent->UpdateEquipmentSlots();
+                        Parent->UpdateBackpackStorageGrid();
+                    }
+                    
+                    // Принудительно очищаем грид рюкзака при снятии рюкзака
+                    if (EquippableItem->EquipmentSlot == Backpack)
+                    {
+                        if (GEngine)
+                        {
+                            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("🗑️ Снят рюкзак - принудительно очищаем грид"));
+                        }
+                        
+                        // Backpack grid removed - no longer needed
+                    }
+                    
+                    // Обновляем UI
+                    Parent->RefreshInventoryUI();
+                    
+                    // Для других предметов (не жилет и не рюкзак) просто обновляем гриды
+                    if (EquippableItem->EquipmentSlot != Vest && EquippableItem->EquipmentSlot != Backpack)
+                    {
+                        // Для других предметов просто обновляем гриды
+                        FTimerHandle TimerHandle;
+                        UInventoryWidget* ParentWidget = Parent;
+                        GetWorld()->GetTimerManager().SetTimer(TimerHandle, [ParentWidget]()
+                        {
+                            if (ParentWidget)
+                            {
+                                ParentWidget->UpdateVestGrid();
+                                // Backpack grid removed - no longer needed
+                                if (GEngine)
+                                {
+                                    GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, TEXT("🔄 Принудительно обновлен грид жилета после снятия"));
+                                }
+                            }
+                        }, 0.1f, false);
                     }
                 }
                 else
@@ -398,7 +484,7 @@ void UInventoryItemWidget::OnUnequipClicked()
         }
     }
     
-    // Закрыть меню
+        // Закрыть меню
     if (UInventoryWidget* Parent = GetTypedOuter<UInventoryWidget>())
     {
         if (UCanvasPanel* RootLocal = Cast<UCanvasPanel>(Parent->WidgetTree->RootWidget))
@@ -438,23 +524,29 @@ FReply UInventoryItemWidget::NativeOnKeyDown(const FGeometry& InGeometry, const 
 
 void UInventoryItemWidget::NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation)
 {
-    // Проверяем, находится ли этот виджет в гриде жилета
-    UCanvasPanel* ParentPanel = Cast<UCanvasPanel>(GetParent());
-    if (ParentPanel && ParentPanel->GetName().Contains(TEXT("VestGrid")))
-    {
-        // Если предмет в гриде жилета, перемещаем его в рюкзак при начале drag
-        if (UInventoryWidget* Parent = GetTypedOuter<UInventoryWidget>())
-        {
-            Parent->HandleVestGridItemDrag(ItemData);
-        }
-        return; // Не создаем drag операцию для предметов в гриде жилета
-    }
-    
+    // Разрешаем нормальный drag даже если предмет находится в гриде —
+    // перенос/удаление обработаем на стадии Drop
     UDragDropOperation* Op = UWidgetBlueprintLibrary::CreateDragDropOperation(UDragDropOperation::StaticClass());
-    Op->DefaultDragVisual = this;
-    Op->Payload = this;
-    Op->Pivot = EDragPivot::MouseDown;
-    OutOperation = Op;
+    if (Op)
+    {
+        UInventoryItemWidget* DragVisual = CreateWidget<UInventoryItemWidget>(GetOwningPlayer(), UInventoryItemWidget::StaticClass());
+        if (DragVisual)
+        {
+            UTexture2D* IconTex = (ItemData && ItemData->Icon)
+                ? ItemData->Icon
+                : LoadObject<UTexture2D>(nullptr, TEXT("/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture"));
+            DragVisual->Init(ItemData, IconTex, FVector2D(60.f, 60.f));
+            DragVisual->bRotated = bRotated;
+            DragVisual->UpdateVisualSize(FVector2D(60.f, 60.f));
+            DragVisual->SetTint(FLinearColor(1.f, 1.f, 1.f, 0.85f));
+            DragVisual->SetVisibility(ESlateVisibility::HitTestInvisible);
+            Op->DefaultDragVisual = DragVisual;
+        }
+        Op->Payload = this;
+        Op->Pivot = EDragPivot::MouseDown;
+        OutOperation = Op;
+    }
+    // Подсветка исходного виджета
     SetTint(FLinearColor(1.f, 1.f, 0.f, 1.f));
 }
 

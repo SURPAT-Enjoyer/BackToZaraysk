@@ -28,6 +28,10 @@ bool UInventoryComponent::RemoveSpecificFromBackpack(UInventoryItemData* Item)
     if (!Item) return false;
     const int32 Index = BackpackItems.Find(Item);
     if (Index == INDEX_NONE) return false;
+    
+    // Очищаем сохраненную позицию при удалении
+    ItemPositions.Remove(Item);
+    
     BackpackItems.RemoveAt(Index);
     return true;
 }
@@ -77,7 +81,29 @@ bool UInventoryComponent::EquipItemFromInventory(UEquippableItemData* Item)
 		return false;
 	}
 
-	// Экипируем предмет
+	// Проверяем, не занят ли уже слот
+	if (EquipmentSlots.Contains(Item->EquipmentSlot))
+	{
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, 
+				FString::Printf(TEXT("⚠️ Slot %d is already occupied by another item"), (int32)Item->EquipmentSlot));
+		}
+		return false;
+	}
+
+    // Если это рюкзак и в ItemData уже есть PersistenStorage (например, после повторного подбора), 
+    // и в оперативном EquipmentStorage пусто — восстановим его перед экипировкой
+    if (Item->EquipmentSlot == Backpack)
+    {
+        TArray<TObjectPtr<UInventoryItemData>>& StorageItems = EquipmentStorage.FindOrAdd(Item);
+        if (StorageItems.Num() == 0 && Item->PersistentStorage.Num() > 0)
+        {
+            StorageItems = Item->PersistentStorage;
+        }
+    }
+
+    // Экипируем предмет
 	if (EquipComp->EquipItem(Item))
 	{
 		// Сохраняем позицию предмета перед удалением
@@ -104,14 +130,30 @@ bool UInventoryComponent::EquipItemFromInventory(UEquippableItemData* Item)
 		RemoveSpecificFromBackpack(Item);
 		EquipmentSlots.Add(Item->EquipmentSlot, Item);
 		
-		if (GEngine)
+		// Проверяем, что предмет действительно экипирован
+		UEquippableItemData* EquippedItem = EquipComp->GetEquippedItem(Item->EquipmentSlot);
+		if (EquippedItem == Item)
 		{
-			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
-				FString::Printf(TEXT("✅ Successfully equipped: %s to slot %d (Total slots: %d)"), 
-					*Item->DisplayName.ToString(), (int32)Item->EquipmentSlot, EquipmentSlots.Num()));
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+					FString::Printf(TEXT("✅ Successfully equipped: %s to slot %d (Total slots: %d)"), 
+						*Item->DisplayName.ToString(), (int32)Item->EquipmentSlot, EquipmentSlots.Num()));
+			}
+			return true;
 		}
-		
-		return true;
+		else
+		{
+			// Если экипировка не удалась, возвращаем предмет в инвентарь
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
+					TEXT("❌ EquipmentComponent failed to equip item, reverting changes"));
+			}
+			EquipmentSlots.Remove(Item->EquipmentSlot);
+			AddToBackpack(Item);
+			return false;
+		}
 	}
 	else
 	{
@@ -152,8 +194,21 @@ bool UInventoryComponent::UnequipItemToInventory(EEquipmentSlotType SlotType, bo
 		return false;
 	}
 
-	// Снимаем предмет
-	if (EquipComp->UnequipItem(SlotType, bDropToWorld))
+    // Перед снятием: если это рюкзак, и мы выбрасываем в мир — переносим его содержимое в PersistentStorage
+    if (SlotType == Backpack && bDropToWorld)
+    {
+        if (UEquippableItemData* BackpackItem = Item)
+        {
+            // Прокопируем текущее EquipmentStorage в PersistentStorage
+            if (TArray<TObjectPtr<UInventoryItemData>>* StorageItems = EquipmentStorage.Find(BackpackItem))
+            {
+                BackpackItem->PersistentStorage = *StorageItems;
+            }
+        }
+    }
+
+    // Снимаем предмет
+    if (EquipComp->UnequipItem(SlotType, bDropToWorld))
 	{
 		if (GEngine)
 		{
@@ -165,6 +220,13 @@ bool UInventoryComponent::UnequipItemToInventory(EEquipmentSlotType SlotType, bo
 		// Удаляем из слота
 		EquipmentSlots.Remove(SlotType);
 		
+        // Если не выбрасываем в мир, восстанавливаем предмет на исходной позиции
+        // Если выбросили рюкзак — очищаем оперативное хранилище, но оставляем PersistentStorage внутри ItemData
+        if (SlotType == Backpack && bDropToWorld)
+        {
+            EquipmentStorage.Remove(Item);
+        }
+
 		// Если не выбрасываем в мир, восстанавливаем предмет на исходной позиции
 		if (!bDropToWorld)
 		{
@@ -200,6 +262,17 @@ bool UInventoryComponent::RestoreItemToPosition(UInventoryItemData* Item)
 	{
 		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ RestoreItemToPosition: Item is null"));
 		return false;
+	}
+	
+	// Проверяем, что предмет не находится уже в инвентаре
+	if (BackpackItems.Contains(Item))
+	{
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, 
+				FString::Printf(TEXT("⚠️ Item '%s' is already in backpack"), *Item->DisplayName.ToString()));
+		}
+		return true; // Предмет уже в инвентаре, считаем успехом
 	}
 	
 	if (GEngine)
@@ -262,8 +335,13 @@ bool UInventoryComponent::AddToEquipmentStorage(UEquippableItemData* Equipment, 
 		return false;
 	}
 	
-	// Получаем или создаем массив для этого экипированного предмета
-	TArray<TObjectPtr<UInventoryItemData>>& StorageItems = EquipmentStorage.FindOrAdd(Equipment);
+    // Получаем или создаем массив для этого экипированного предмета
+    TArray<TObjectPtr<UInventoryItemData>>& StorageItems = EquipmentStorage.FindOrAdd(Equipment);
+    // Синхронизируем с персистентным массивом в самом ItemData
+    if (StorageItems.Num() == 0 && Equipment->PersistentStorage.Num() > 0)
+    {
+        StorageItems = Equipment->PersistentStorage;
+    }
 	
 	// Проверяем, есть ли место (простая проверка по количеству ячеек)
 	int32 TotalCells = Equipment->AdditionalGridSize.X * Equipment->AdditionalGridSize.Y;
@@ -284,7 +362,12 @@ bool UInventoryComponent::AddToEquipmentStorage(UEquippableItemData* Equipment, 
 		return false;
 	}
 	
-	StorageItems.Add(Item);
+    StorageItems.Add(Item);
+    // Дублируем в персистентное хранилище, чтобы переживать выброс и повторное поднятие
+    if (!Equipment->PersistentStorage.Contains(Item))
+    {
+        Equipment->PersistentStorage.Add(Item);
+    }
 	
 	if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
 		FString::Printf(TEXT("✅ Added '%s' to equipment storage. Items count: %d"), 
@@ -301,7 +384,7 @@ bool UInventoryComponent::RemoveFromEquipmentStorage(UEquippableItemData* Equipm
 		return false;
 	}
 	
-	TArray<TObjectPtr<UInventoryItemData>>* StorageItems = EquipmentStorage.Find(Equipment);
+    TArray<TObjectPtr<UInventoryItemData>>* StorageItems = EquipmentStorage.Find(Equipment);
 	if (!StorageItems)
 	{
 		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ No storage found for this equipment"));
@@ -313,8 +396,10 @@ bool UInventoryComponent::RemoveFromEquipmentStorage(UEquippableItemData* Equipm
 		return StoredItem == Item;
 	});
 	
-	if (RemovedCount > 0)
+    if (RemovedCount > 0)
 	{
+        // Также удаляем из персистентного массива (если логика требует полного перемещения из рюкзака)
+        Equipment->PersistentStorage.Remove(Item);
 		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
 			FString::Printf(TEXT("✅ Removed '%s' from equipment storage. Remaining items: %d"), 
 				*Item->DisplayName.ToString(), StorageItems->Num()));
@@ -350,6 +435,178 @@ TArray<UInventoryItemData*> UInventoryComponent::GetEquipmentStorageItems(UEquip
 	}
 	
 	return Result;
+}
+
+bool UInventoryComponent::SyncWithEquipmentComponent()
+{
+	// Получаем компонент экипировки
+	ACharacter* Owner = Cast<ACharacter>(GetOwner());
+	if (!Owner) 
+	{
+		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ SyncWithEquipmentComponent: Owner is not ACharacter"));
+		return false;
+	}
+
+	UEquipmentComponent* EquipComp = Owner->FindComponentByClass<UEquipmentComponent>();
+	if (!EquipComp)
+	{
+		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ SyncWithEquipmentComponent: EquipmentComponent not found!"));
+		return false;
+	}
+
+	bool bSyncSuccessful = true;
+	
+	// Проверяем все слоты в EquipmentSlots
+	for (auto& SlotPair : EquipmentSlots)
+	{
+		EEquipmentSlotType SlotType = SlotPair.Key;
+		UEquippableItemData* Item = SlotPair.Value;
+		
+		// Проверяем, что предмет действительно экипирован в EquipmentComponent
+		UEquippableItemData* EquippedItem = EquipComp->GetEquippedItem(SlotType);
+		if (EquippedItem != Item)
+		{
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
+					FString::Printf(TEXT("❌ Sync error: Slot %d mismatch! Inventory: %s, Equipment: %s"), 
+						(int32)SlotType,
+						Item ? *Item->DisplayName.ToString() : TEXT("NULL"),
+						EquippedItem ? *EquippedItem->DisplayName.ToString() : TEXT("NULL")));
+			}
+			bSyncSuccessful = false;
+		}
+	}
+	
+	// Проверяем все экипированные предметы в EquipmentComponent
+	for (int32 SlotIndex = 0; SlotIndex < 7; ++SlotIndex) // Все возможные слоты
+	{
+		EEquipmentSlotType SlotType = (EEquipmentSlotType)SlotIndex;
+		if (EquipComp->IsSlotOccupied(SlotType))
+		{
+			UEquippableItemData* EquippedItem = EquipComp->GetEquippedItem(SlotType);
+			if (!EquipmentSlots.Contains(SlotType))
+			{
+				if (GEngine)
+				{
+					GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
+						FString::Printf(TEXT("❌ Sync error: Slot %d equipped in EquipmentComponent but not in InventoryComponent!"), 
+							(int32)SlotType));
+				}
+				bSyncSuccessful = false;
+			}
+		}
+	}
+	
+	if (bSyncSuccessful)
+	{
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+				TEXT("✅ InventoryComponent and EquipmentComponent are synchronized"));
+		}
+	}
+	else
+	{
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
+				TEXT("❌ Synchronization errors detected between InventoryComponent and EquipmentComponent"));
+		}
+	}
+	
+	return bSyncSuccessful;
+}
+
+bool UInventoryComponent::HasSpaceInGridLike(const FIntPoint& GridSize, const TArray<TObjectPtr<UInventoryItemData>>& Items, int32 ItemSizeX, int32 ItemSizeY) const
+{
+    // Простейшая проверка «по площади»: суммы размеров без раскладки
+    int32 UsedCells = 0;
+    for (const auto& It : Items)
+    {
+        if (It)
+        {
+            UsedCells += FMath::Max(1, It->SizeInCellsX) * FMath::Max(1, It->SizeInCellsY);
+        }
+    }
+    const int32 TotalCells = GridSize.X * GridSize.Y;
+    const int32 NeedCells = FMath::Max(1, ItemSizeX) * FMath::Max(1, ItemSizeY);
+    return (UsedCells + NeedCells) <= TotalCells;
+}
+
+bool UInventoryComponent::AddToGridLike(TArray<TObjectPtr<UInventoryItemData>>& Items, const FIntPoint& GridSize, UInventoryItemData* Item)
+{
+    if (!Item) return false;
+    if (!HasSpaceInGridLike(GridSize, Items, Item->SizeInCellsX, Item->SizeInCellsY)) return false;
+    Items.Add(Item);
+    return true;
+}
+
+bool UInventoryComponent::TryPickupItem(UInventoryItemData* Item)
+{
+    if (!Item)
+    {
+        if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Red, TEXT("❌ TryPickupItem: Item is null"));
+        return false;
+    }
+
+    // 1) Если предмет экипируемый и слот свободен — экипируем
+    if (UEquippableItemData* Eq = Cast<UEquippableItemData>(Item))
+    {
+        if (!EquipmentSlots.Contains(Eq->EquipmentSlot))
+        {
+            // Добавим во временный инвентарь, чтобы использовать существующую логику
+            BackpackItems.Add(Item);
+            const bool bEquipped = EquipItemFromInventory(Eq);
+            if (!bEquipped)
+            {
+                RemoveSpecificFromBackpack(Item);
+            }
+            return bEquipped;
+        }
+        // Если слот занят — идем по приоритету гридов ниже
+    }
+
+    // 2) Если предмет нельзя экипировать или слот занят — кладём в рюкзак, затем жилет, затем пояс, затем карманы
+    // Рюкзак как обычный список (здесь без ширины/высоты) — проверим площадь доп.хранилища рюкзака, если он экипирован и имеет хранилище
+    if (UEquippableItemData* EquippedBackpack = GetEquippedItem(Backpack))
+    {
+        if (EquippedBackpack->bHasAdditionalStorage)
+        {
+            if (AddToEquipmentStorage(EquippedBackpack, Item))
+            {
+                return true;
+            }
+        }
+    }
+
+    // Жилет как хранилище (если есть)
+    if (UEquippableItemData* EquippedVest = GetEquippedItem(Vest))
+    {
+        if (EquippedVest->bHasAdditionalStorage)
+        {
+            if (AddToEquipmentStorage(EquippedVest, Item))
+            {
+                return true;
+            }
+        }
+    }
+
+    // Пояс
+    if (AddToGridLike(BeltStorageItems, BeltGridSize, Item))
+    {
+        return true;
+    }
+
+    // Карманы
+    if (AddToGridLike(PocketsStorageItems, PocketsGridSize, Item))
+    {
+        return true;
+    }
+
+    // Не хватает места нигде — не подбираем
+    if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Yellow, TEXT("⚠️ TryPickupItem: No space in any storage"));
+    return false;
 }
 
 

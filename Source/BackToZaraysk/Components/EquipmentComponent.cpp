@@ -33,6 +33,39 @@ bool UEquipmentComponent::EquipItem(UEquippableItemData* ItemData)
         return false;
     }
     
+    // Проверяем валидность слота
+    if (ItemData->EquipmentSlot == EEquipmentSlotType::None)
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
+                FString::Printf(TEXT("❌ EquipmentComponent: Invalid slot type for item '%s'"), *ItemData->DisplayName.ToString()));
+        }
+        return false;
+    }
+    
+    // Проверяем, что предмет не экипирован уже
+    if (ItemData->bIsEquipped)
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, 
+                FString::Printf(TEXT("⚠️ Item '%s' is already equipped"), *ItemData->DisplayName.ToString()));
+        }
+        return false;
+    }
+    
+    // Проверяем валидность меша для экипировки
+    if (!ItemData->EquippedMesh || !ItemData->EquippedMesh->IsValidLowLevel())
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
+                FString::Printf(TEXT("❌ Item '%s' has invalid EquippedMesh - cannot equip"), *ItemData->DisplayName.ToString()));
+        }
+        return false;
+    }
+    
     if (GEngine)
     {
         GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, 
@@ -175,6 +208,22 @@ USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquip
         return nullptr;
     }
     
+    // Проверяем, что меш валиден
+    if (!IsValid(ItemData->EquippedMesh))
+    {
+        if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
+            FString::Printf(TEXT("❌ CreateEquipmentMeshComponent: EquippedMesh is invalid for %s"), *ItemData->DisplayName.ToString()));
+        return nullptr;
+    }
+    
+    // Дополнительная проверка на существование меша
+    if (!ItemData->EquippedMesh->IsValidLowLevel())
+    {
+        if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
+            FString::Printf(TEXT("❌ CreateEquipmentMeshComponent: EquippedMesh is not valid low level for %s"), *ItemData->DisplayName.ToString()));
+        return nullptr;
+    }
+    
     if (!CharacterMesh)
     {
         if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ CreateEquipmentMeshComponent: CharacterMesh is null"));
@@ -205,12 +254,24 @@ USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquip
     }
     
     // Настраиваем компонент
-    MeshComp->SetSkeletalMesh(ItemData->EquippedMesh);
-    if (GEngine)
+    USkeletalMesh* SkeletalMesh = Cast<USkeletalMesh>(ItemData->EquippedMesh);
+    if (SkeletalMesh)
     {
-        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
-            FString::Printf(TEXT("🔧 Set SkeletalMesh: %s"), 
-                ItemData->EquippedMesh ? *ItemData->EquippedMesh->GetName() : TEXT("NULL")));
+        MeshComp->SetSkeletalMesh(SkeletalMesh);
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+                FString::Printf(TEXT("🔧 Set SkeletalMesh: %s"), *SkeletalMesh->GetName()));
+        }
+    }
+    else
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
+                FString::Printf(TEXT("❌ Failed to cast EquippedMesh to USkeletalMesh: %s"), 
+                    ItemData->EquippedMesh ? *ItemData->EquippedMesh->GetName() : TEXT("NULL")));
+        }
     }
     
     // Устанавливаем материал для лучшей видимости
@@ -226,9 +287,9 @@ USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquip
     // Прикрепляем к персонажу
     if (ItemData->AttachSocketName != NAME_None && CharacterMesh->DoesSocketExist(ItemData->AttachSocketName))
     {
-        // Для скелетных мешей используем KeepWorldTransform для правильного прикрепления
+        // Для скелетных мешей используем SnapToTarget для правильного прикрепления к сокету
         MeshComp->AttachToComponent(CharacterMesh, 
-            FAttachmentTransformRules::KeepWorldTransform, 
+            FAttachmentTransformRules::SnapToTargetNotIncludingScale, 
             ItemData->AttachSocketName);
         
         if (GEngine)
@@ -242,7 +303,7 @@ USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquip
     {
         // Прикрепляем к корню меша (к персонажу)
         MeshComp->AttachToComponent(CharacterMesh, 
-            FAttachmentTransformRules::KeepWorldTransform);
+            FAttachmentTransformRules::SnapToTargetNotIncludingScale);
         
         if (GEngine)
         {
@@ -261,10 +322,11 @@ USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquip
     }
     
     // Устанавливаем LeaderPoseComponent для прикрепления скелета к скелету
-    // Для тактического жилета всегда используем LeaderPoseComponent
-    if (ItemData->EquippedMesh)
+    // LeaderPoseComponent нужен только для скелетных мешей, которые должны следовать анимации персонажа
+    USkeletalMesh* SkeletalMeshForSkeleton = Cast<USkeletalMesh>(ItemData->EquippedMesh);
+    if (SkeletalMeshForSkeleton && SkeletalMeshForSkeleton->GetSkeleton())
     {
-        // Используем LeaderPoseComponent для скелетных мешей
+        // Проверяем, что у меша есть скелет (это скелетный меш)
         MeshComp->SetLeaderPoseComponent(CharacterMesh);
         
         if (GEngine)
@@ -278,7 +340,7 @@ USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquip
         if (GEngine)
         {
             GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, 
-                TEXT("⚠️ LeaderPoseComponent disabled - no EquippedMesh"));
+                TEXT("⚠️ LeaderPoseComponent disabled - not a skeletal mesh"));
         }
     }
     

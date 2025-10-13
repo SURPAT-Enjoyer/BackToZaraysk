@@ -74,6 +74,10 @@ public:
     UFUNCTION(BlueprintCallable, Category="Inventory|Debug", meta=(WorldContext="WorldContextObject"))
     static AActor* SpawnTestTacticalVest(UObject* WorldContextObject, FVector SpawnLocation);
 
+    // === PICKUP МАППИНГ ===
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category="Inventory|Helpers")
+    static TSubclassOf<AActor> GetPickupClassForItem(const class UInventoryItemData* ItemData);
+
 private:
     // Получить персонажа игрока
     static APlayerCharacter* GetPlayerCharacter(UObject* WorldContextObject);

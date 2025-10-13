@@ -83,3 +83,5 @@ Space: Local
 - **HeadPitchRotation**: наклон головы вверх/вниз
 - **HeadYawRotation**: поворот головы влево/вправо
 
+
+

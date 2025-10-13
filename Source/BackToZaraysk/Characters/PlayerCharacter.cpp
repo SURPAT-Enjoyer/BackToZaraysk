@@ -43,8 +43,16 @@ APlayerCharacter::APlayerCharacter(const FObjectInitializer& ObjectInitializer)
 	//SkeletalMeshComponent->SetupAttachment(RootComponent);
 
     InventoryComponent = CreateDefaultSubobject<UInventoryComponent>(TEXT("InventoryComponent"));
+    if (!InventoryComponent)
+    {
+        UE_LOG(LogTemp, Error, TEXT("PlayerCharacter: Failed to create InventoryComponent!"));
+    }
 
     EquipmentComponent = CreateDefaultSubobject<UEquipmentComponent>(TEXT("EquipmentComponent"));
+    if (!EquipmentComponent)
+    {
+        UE_LOG(LogTemp, Error, TEXT("PlayerCharacter: Failed to create EquipmentComponent!"));
+    }
 
     ObstacleClimbingComponent = CreateDefaultSubobject<UObstacleClimbingComponent>(TEXT("ObstacleClimbingComponent"));
 
