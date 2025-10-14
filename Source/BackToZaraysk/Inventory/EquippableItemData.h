@@ -47,6 +47,14 @@ public:
     // Персистентное содержимое хранилища предмета (живёт вместе с самим ItemData)
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment|Storage")
     TArray<TObjectPtr<class UInventoryItemData>> PersistentStorage;
+
+    // Позиции предметов в гриде (CellX, CellY) по конкретному ItemData
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment|Storage")
+    TMap<TObjectPtr<class UInventoryItemData>, FIntPoint> StoredCellByItem;
+
+    // Персистентная копия позиций для переживания выброса/подбора
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment|Storage")
+    TMap<TObjectPtr<class UInventoryItemData>, FIntPoint> PersistentCellByItem;
 };
 
 /**

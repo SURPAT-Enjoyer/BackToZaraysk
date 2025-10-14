@@ -10,6 +10,10 @@ class BACKTOZARAYSK_API APickupCube : public APickupBase
     GENERATED_BODY()
 public:
     APickupCube();
+
+protected:
+    virtual void BeginPlay() override;
+    virtual void ApplyItemInstanceVisuals() override;
 };
 
 

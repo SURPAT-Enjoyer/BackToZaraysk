@@ -57,9 +57,13 @@ void APickupBackpack::OnPickedUp(UInventoryComponent* InventoryComponent)
         GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, TEXT("🎒 APickupBackpack::OnPickedUp - Auto-equipping backpack"));
     }
     
-    // Создаем данные предмета
+    // Создаем или используем существующий экземпляр данных предмета (с сохранённым содержимым)
     UInventoryItemData* Data = nullptr;
-    if (ItemClass)
+    if (ItemInstance)
+    {
+        Data = ItemInstance;
+    }
+    else if (ItemClass)
     {
         UObject* NewObj = NewObject<UObject>(this, ItemClass);
         Data = Cast<UInventoryItemData>(NewObj);
@@ -89,6 +93,8 @@ void APickupBackpack::OnPickedUp(UInventoryComponent* InventoryComponent)
                 GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
                     FString::Printf(TEXT("✅ Backpack auto-equipped: %s"), *EquipData->DisplayName.ToString()));
             }
+            // После успешной экипировки ItemInstance принадлежит инвентарю — разрываем ссылку у Pickup, чтобы не было двойного владения
+            ItemInstance = nullptr;
             
             // Уничтожаем pickup объект
             Destroy();

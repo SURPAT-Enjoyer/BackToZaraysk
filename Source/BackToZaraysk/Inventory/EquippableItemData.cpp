@@ -59,8 +59,7 @@ UBackpackItemData::UBackpackItemData()
     bHasAdditionalStorage = true;
     AdditionalGridSize = FIntPoint(8, 6); // 8 колонок, 6 рядов
     
-    // Создаем простой параллелепипед как модель рюкзака
-    // Используем статический меш куба и масштабируем его
+    // Задаём меш рюкзака: используем гарантированный статический куб из Engine
     FString MeshPath = TEXT("/Engine/BasicShapes/Cube.Cube");
     EquippedMesh = LoadObject<UStaticMesh>(nullptr, *MeshPath);
     
@@ -74,12 +73,11 @@ UBackpackItemData::UBackpackItemData()
         EquippedMesh = nullptr; // Убеждаемся, что указатель null
     }
     
-    // Устанавливаем относительный трансформ для рюкзака
-    // Масштабируем куб в форму параллелепипеда рюкзака
+    // Относительный трансформ — визуально как рюкзак на спине
     RelativeTransform = FTransform(
-        FRotator(0.0f, 0.0f, 0.0f),     // Без поворота
-        FVector(0.0f, 0.0f, 0.0f),      // Без смещения
-        FVector(0.8f, 0.4f, 1.2f)       // Масштаб: ширина, глубина, высота
+        FRotator(0.0f, 0.0f, 0.0f),      // без поворота
+        FVector(-12.0f, 0.0f, -4.0f),    // слегка назад и вниз
+        FVector(0.28f, 0.16f, 0.36f)     // похожие пропорции на рюкзак
     );
 }
 

@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "BackToZaraysk/Inventory/EquipmentSlotType.h"
+#include "Components/SceneComponent.h"
 #include "EquipmentComponent.generated.h"
 
 class UEquippableItemData;
@@ -44,16 +45,16 @@ private:
     UPROPERTY()
     TMap<TEnumAsByte<EEquipmentSlotType>, UEquippableItemData*> EquippedItems;
     
-    // Карта компонентов мешей: Слот -> SkeletalMeshComponent
+    // Карта визуальных компонентов экипировки: Слот -> SceneComponent (SkeletalMeshComponent или StaticMeshComponent)
     UPROPERTY()
-    TMap<TEnumAsByte<EEquipmentSlotType>, USkeletalMeshComponent*> EquipmentMeshComponents;
+    TMap<TEnumAsByte<EEquipmentSlotType>, USceneComponent*> EquipmentMeshComponents;
     
     // Ссылка на меш персонажа
     UPROPERTY()
     USkeletalMeshComponent* CharacterMesh;
     
-    // Создать и прикрепить компонент меша для экипировки
-    USkeletalMeshComponent* CreateEquipmentMeshComponent(EEquipmentSlotType SlotType, UEquippableItemData* ItemData);
+    // Создать и прикрепить компонент меша для экипировки (Skeletal или Static)
+    USceneComponent* CreateEquipmentMeshComponent(EEquipmentSlotType SlotType, UEquippableItemData* ItemData);
     
     // Удалить компонент меша экипировки
     void RemoveEquipmentMeshComponent(EEquipmentSlotType SlotType);

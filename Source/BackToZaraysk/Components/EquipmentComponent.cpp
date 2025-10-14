@@ -1,8 +1,12 @@
 #include "EquipmentComponent.h"
 #include "BackToZaraysk/Inventory/EquippableItemData.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "GameFramework/Character.h"
 #include "Engine/SkeletalMesh.h"
+// For backpack pickup spawn on drop
+#include "BackToZaraysk/GameData/Items/Test/PickupBackpack.h"
 
 UEquipmentComponent::UEquipmentComponent()
 {
@@ -92,8 +96,8 @@ bool UEquipmentComponent::EquipItem(UEquippableItemData* ItemData)
         return false;
     }
     
-    // Создаем и прикрепляем меш
-    USkeletalMeshComponent* MeshComp = CreateEquipmentMeshComponent(SlotType, ItemData);
+    // Создаем и прикрепляем визуальный компонент (skeletal/static)
+    USceneComponent* MeshComp = CreateEquipmentMeshComponent(SlotType, ItemData);
     if (!MeshComp)
     {
         UE_LOG(LogTemp, Error, TEXT("EquipmentComponent: Failed to create mesh component"));
@@ -114,9 +118,9 @@ bool UEquipmentComponent::EquipItem(UEquippableItemData* ItemData)
         GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, 
             FString::Printf(TEXT("🔧 EquipmentMeshComponents count: %d"), EquipmentMeshComponents.Num()));
         
-        if (USkeletalMeshComponent** MeshPtr = EquipmentMeshComponents.Find(SlotType))
+    if (USceneComponent** MeshPtr = EquipmentMeshComponents.Find(SlotType))
         {
-            USkeletalMeshComponent* Mesh = *MeshPtr;
+        USceneComponent* Mesh = *MeshPtr;
             if (Mesh)
             {
                 GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, 
@@ -147,16 +151,33 @@ bool UEquipmentComponent::UnequipItem(EEquipmentSlotType SlotType, bool bDropToW
     {
         ItemData->bIsEquipped = false;
         
-        // Если нужно выбросить в мир
+        // Если нужно выбросить в мир — спавним правильный pickup и переносим в него текущий экземпляр ItemData
         if (bDropToWorld)
         {
-            // TODO: Добавить логику выброса предмета в мир
-            // Пока что просто логируем
-            if (GEngine)
+            if (SlotType == Backpack)
             {
-                GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Orange, 
-                    FString::Printf(TEXT("🗑️ Предмет %s будет выброшен в мир"), 
-                        *ItemData->DisplayName.ToString()));
+                if (ACharacter* Character = Cast<ACharacter>(GetOwner()))
+                {
+                    const FVector SpawnLoc = Character->GetActorLocation() + Character->GetActorForwardVector() * 80.f;
+                    const FRotator SpawnRot = Character->GetActorRotation();
+                    FActorSpawnParameters Params; Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+                    if (UWorld* World = GetWorld())
+                    {
+                        if (APickupBackpack* Pickup = World->SpawnActor<APickupBackpack>(APickupBackpack::StaticClass(), SpawnLoc, SpawnRot, Params))
+                        {
+                            Pickup->ItemInstance = ItemData; // сохраняем все данные, включая PersistentStorage
+                        }
+                    }
+                }
+            }
+            else
+            {
+                if (GEngine)
+                {
+                    GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Orange, 
+                        FString::Printf(TEXT("🗑️ Предмет %s будет выброшен в мир"), 
+                            *ItemData->DisplayName.ToString()));
+                }
             }
         }
     }
@@ -193,7 +214,7 @@ bool UEquipmentComponent::IsSlotOccupied(EEquipmentSlotType SlotType) const
     return EquippedItems.Contains(SlotType);
 }
 
-USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquipmentSlotType SlotType, UEquippableItemData* ItemData)
+USceneComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquipmentSlotType SlotType, UEquippableItemData* ItemData)
 {
     if (!ItemData)
     {
@@ -238,47 +259,34 @@ USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquip
     
     // Создаем новый компонент меша
     FString ComponentName = FString::Printf(TEXT("EquipmentMesh_%d"), (int32)SlotType);
-    USkeletalMeshComponent* MeshComp = NewObject<USkeletalMeshComponent>(GetOwner(), FName(*ComponentName));
-    
-    if (!MeshComp)
+    USceneComponent* Created = nullptr;
+    if (USkeletalMesh* Sk = Cast<USkeletalMesh>(ItemData->EquippedMesh))
     {
-        UE_LOG(LogTemp, Error, TEXT("EquipmentComponent: Failed to create mesh component"));
-        if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ Failed to create mesh component"));
-        return nullptr;
+        USkeletalMeshComponent* SkComp = NewObject<USkeletalMeshComponent>(GetOwner(), FName(*ComponentName));
+        if (!SkComp) return nullptr;
+        SkComp->SetSkeletalMesh(Sk);
+        Created = SkComp;
     }
-    
-    if (GEngine)
+    else if (UStaticMesh* St = Cast<UStaticMesh>(ItemData->EquippedMesh))
     {
-        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
-            FString::Printf(TEXT("🔧 Created mesh component: %s"), *ComponentName));
-    }
-    
-    // Настраиваем компонент
-    USkeletalMesh* SkeletalMesh = Cast<USkeletalMesh>(ItemData->EquippedMesh);
-    if (SkeletalMesh)
-    {
-        MeshComp->SetSkeletalMesh(SkeletalMesh);
-        if (GEngine)
-        {
-            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
-                FString::Printf(TEXT("🔧 Set SkeletalMesh: %s"), *SkeletalMesh->GetName()));
-        }
+        UStaticMeshComponent* StComp = NewObject<UStaticMeshComponent>(GetOwner(), FName(*ComponentName));
+        if (!StComp) return nullptr;
+        StComp->SetStaticMesh(St);
+        Created = StComp;
     }
     else
     {
-        if (GEngine)
-        {
-            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
-                FString::Printf(TEXT("❌ Failed to cast EquippedMesh to USkeletalMesh: %s"), 
-                    ItemData->EquippedMesh ? *ItemData->EquippedMesh->GetName() : TEXT("NULL")));
-        }
+        return nullptr;
     }
     
-    // Устанавливаем материал для лучшей видимости
-    MeshComp->SetMaterial(0, nullptr); // Используем материал по умолчанию
+    // Устанавливаем материал для лучшей видимости (только для скелетных)
+    if (USkeletalMeshComponent* AsSk = Cast<USkeletalMeshComponent>(Created))
+    {
+        AsSk->SetMaterial(0, nullptr); // Используем материал по умолчанию
+    }
 
     // Регистрируем компонент ПЕРЕД прикреплением
-    MeshComp->RegisterComponent();
+    Created->RegisterComponent();
     if (GEngine)
     {
         GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, TEXT("🔧 Mesh component registered"));
@@ -288,7 +296,7 @@ USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquip
     if (ItemData->AttachSocketName != NAME_None && CharacterMesh->DoesSocketExist(ItemData->AttachSocketName))
     {
         // Для скелетных мешей используем SnapToTarget для правильного прикрепления к сокету
-        MeshComp->AttachToComponent(CharacterMesh, 
+        Created->AttachToComponent(CharacterMesh, 
             FAttachmentTransformRules::SnapToTargetNotIncludingScale, 
             ItemData->AttachSocketName);
         
@@ -302,7 +310,7 @@ USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquip
     else
     {
         // Прикрепляем к корню меша (к персонажу)
-        MeshComp->AttachToComponent(CharacterMesh, 
+        Created->AttachToComponent(CharacterMesh, 
             FAttachmentTransformRules::SnapToTargetNotIncludingScale);
         
         if (GEngine)
@@ -323,33 +331,24 @@ USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquip
     
     // Устанавливаем LeaderPoseComponent для прикрепления скелета к скелету
     // LeaderPoseComponent нужен только для скелетных мешей, которые должны следовать анимации персонажа
-    USkeletalMesh* SkeletalMeshForSkeleton = Cast<USkeletalMesh>(ItemData->EquippedMesh);
-    if (SkeletalMeshForSkeleton && SkeletalMeshForSkeleton->GetSkeleton())
+    if (USkeletalMeshComponent* AsSk = Cast<USkeletalMeshComponent>(Created))
     {
-        // Проверяем, что у меша есть скелет (это скелетный меш)
-        MeshComp->SetLeaderPoseComponent(CharacterMesh);
-        
-        if (GEngine)
+        USkeletalMesh* SkeletalMeshForSkeleton = Cast<USkeletalMesh>(ItemData->EquippedMesh);
+        if (SkeletalMeshForSkeleton && SkeletalMeshForSkeleton->GetSkeleton())
         {
-            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
-                TEXT("🔧 LeaderPoseComponent enabled for skeletal mesh"));
-        }
-    }
-    else
-    {
-        if (GEngine)
-        {
-            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, 
-                TEXT("⚠️ LeaderPoseComponent disabled - not a skeletal mesh"));
+            AsSk->SetLeaderPoseComponent(CharacterMesh);
         }
     }
     
     // Применяем относительный трансформ
-    MeshComp->SetRelativeTransform(ItemData->RelativeTransform);
+    if (USceneComponent* C = Created)
+    {
+        C->SetRelativeTransform(ItemData->RelativeTransform);
+    }
     
     if (GEngine)
     {
-        FTransform AppliedTransform = MeshComp->GetRelativeTransform();
+        FTransform AppliedTransform = Created->GetRelativeTransform();
         GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, 
             FString::Printf(TEXT("🔧 Applied RelativeTransform: Loc(%.2f,%.2f,%.2f) Rot(%.2f,%.2f,%.2f) Scale(%.2f,%.2f,%.2f)"), 
                 AppliedTransform.GetLocation().X, AppliedTransform.GetLocation().Y, AppliedTransform.GetLocation().Z,
@@ -358,19 +357,14 @@ USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquip
     }
     
     // Отключаем коллизию для экипированного предмета
-    MeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-    
-    // Принудительно делаем видимым
-    MeshComp->SetVisibility(true);
-    MeshComp->SetHiddenInGame(false);
-    
-    // Дополнительные настройки для гарантии видимости
-    MeshComp->SetVisibility(true);
-    MeshComp->MarkRenderStateDirty();
-    
-    // Принудительно обновляем трансформ
-    MeshComp->UpdateBounds();
-    MeshComp->MarkRenderTransformDirty();
+    if (UPrimitiveComponent* Prim = Cast<UPrimitiveComponent>(Created))
+    {
+        Prim->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        Prim->SetVisibility(true);
+        Prim->SetHiddenInGame(false);
+        Prim->UpdateBounds();
+        Prim->MarkRenderTransformDirty();
+    }
     
     // Финальная диагностика
     if (GEngine)
@@ -379,7 +373,7 @@ USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquip
             FString::Printf(TEXT("✅ Mesh component created successfully for slot %d"), (int32)SlotType));
         
         // Проверяем видимость
-        if (MeshComp->IsVisible())
+        if (Created && Created->IsVisible())
         {
             GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, TEXT("✅ Mesh component is visible"));
         }
@@ -389,8 +383,8 @@ USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquip
         }
         
         // Дополнительная диагностика трансформа
-        FTransform RelativeTransform = MeshComp->GetRelativeTransform();
-        FTransform WorldTransform = MeshComp->GetComponentTransform();
+        FTransform RelativeTransform = Created->GetRelativeTransform();
+        FTransform WorldTransform = Created->GetComponentTransform();
         GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, 
             FString::Printf(TEXT("🔧 RelativeTransform: Location(%s), Rotation(%s), Scale(%s)"), 
                 *RelativeTransform.GetLocation().ToString(),
@@ -405,14 +399,14 @@ USkeletalMeshComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquip
     
     UE_LOG(LogTemp, Log, TEXT("EquipmentComponent: Created mesh component for slot %d"), (int32)SlotType);
     
-    return MeshComp;
+    return Created;
 }
 
 void UEquipmentComponent::RemoveEquipmentMeshComponent(EEquipmentSlotType SlotType)
 {
-    if (USkeletalMeshComponent** MeshCompPtr = EquipmentMeshComponents.Find(SlotType))
+    if (USceneComponent** MeshCompPtr = EquipmentMeshComponents.Find(SlotType))
     {
-        USkeletalMeshComponent* MeshComp = *MeshCompPtr;
+        USceneComponent* MeshComp = *MeshCompPtr;
         if (MeshComp)
         {
             MeshComp->DestroyComponent();

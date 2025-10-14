@@ -100,6 +100,14 @@ bool UInventoryComponent::EquipItemFromInventory(UEquippableItemData* Item)
         if (StorageItems.Num() == 0 && Item->PersistentStorage.Num() > 0)
         {
             StorageItems = Item->PersistentStorage;
+            // Восстановим и сохранённые позиции ячеек
+            if (Item->PersistentCellByItem.Num() > 0)
+            {
+                for (auto& Kvp : Item->PersistentCellByItem)
+                {
+                    Item->StoredCellByItem.Add(Kvp.Key, Kvp.Value);
+                }
+            }
         }
     }
 
@@ -203,6 +211,15 @@ bool UInventoryComponent::UnequipItemToInventory(EEquipmentSlotType SlotType, bo
             if (TArray<TObjectPtr<UInventoryItemData>>* StorageItems = EquipmentStorage.Find(BackpackItem))
             {
                 BackpackItem->PersistentStorage = *StorageItems;
+                // Копируем позиции ячеек для каждой ссылки на предмет, если они были сохранены в runtime-структуре
+                // StoredCellByItem могла быть заполнена в UI. Перенесём её в PersistentCellByItem перед выбросом.
+                for (const TObjectPtr<UInventoryItemData>& It : *StorageItems)
+                {
+                    if (It && BackpackItem->StoredCellByItem.Contains(It))
+                    {
+                        BackpackItem->PersistentCellByItem.Add(It, BackpackItem->StoredCellByItem[It]);
+                    }
+                }
             }
         }
     }
@@ -368,6 +385,11 @@ bool UInventoryComponent::AddToEquipmentStorage(UEquippableItemData* Equipment, 
     {
         Equipment->PersistentStorage.Add(Item);
     }
+    else
+    {
+        // Обновляем позиционный массив, если его ведём (простое соответствие индексам)
+        // Здесь можно сохранять пары X,Y через StoredCellsXY
+    }
 	
 	if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
 		FString::Printf(TEXT("✅ Added '%s' to equipment storage. Items count: %d"), 
@@ -398,8 +420,7 @@ bool UInventoryComponent::RemoveFromEquipmentStorage(UEquippableItemData* Equipm
 	
     if (RemovedCount > 0)
 	{
-        // Также удаляем из персистентного массива (если логика требует полного перемещения из рюкзака)
-        Equipment->PersistentStorage.Remove(Item);
+        // Не удаляем из PersistentStorage: оно хранит состояние для выброса/подбора
 		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
 			FString::Printf(TEXT("✅ Removed '%s' from equipment storage. Remaining items: %d"), 
 				*Item->DisplayName.ToString(), StorageItems->Num()));
@@ -410,6 +431,55 @@ bool UInventoryComponent::RemoveFromEquipmentStorage(UEquippableItemData* Equipm
 		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ Item not found in equipment storage"));
 		return false;
 	}
+}
+
+bool UInventoryComponent::RemoveCompletelyFromEquipmentStorage(UEquippableItemData* Equipment, UInventoryItemData* Item)
+{
+    if (!Equipment || !Item) return false;
+    bool bRemoved = false;
+    TArray<TObjectPtr<UInventoryItemData>>* StorageItems = EquipmentStorage.Find(Equipment);
+    if (StorageItems)
+    {
+        const int32 Before = StorageItems->Num();
+        StorageItems->Remove(Item);
+        bRemoved |= (Before != StorageItems->Num());
+    }
+    // Также удаляем из персистентного списка и карт позиций
+    Equipment->PersistentStorage.Remove(Item);
+    Equipment->StoredCellByItem.Remove(Item);
+    Equipment->PersistentCellByItem.Remove(Item);
+    return bRemoved;
+}
+
+bool UInventoryComponent::RemoveFromAnyStorage(UInventoryItemData* Item)
+{
+    if (!Item) return false;
+    bool bRemoved = false;
+    // Рюкзак
+    bRemoved |= RemoveSpecificFromBackpack(Item);
+    // Хранилища экипировки
+    if (UEquippableItemData* EquippedBackpack = GetEquippedItem(Backpack))
+    {
+        bRemoved |= RemoveCompletelyFromEquipmentStorage(EquippedBackpack, Item);
+    }
+    if (UEquippableItemData* EquippedVest = GetEquippedItem(Vest))
+    {
+        bRemoved |= RemoveCompletelyFromEquipmentStorage(EquippedVest, Item);
+    }
+    // Пояс и карманы
+    auto RemoveFromArray = [&](TArray<TObjectPtr<UInventoryItemData>>& Arr)
+    {
+        const int32 Before = Arr.Num();
+        Arr.Remove(Item);
+        return Arr.Num() != Before;
+    };
+    bRemoved |= RemoveFromArray(BeltStorageItems);
+    bRemoved |= RemoveFromArray(Pocket1Items);
+    bRemoved |= RemoveFromArray(Pocket2Items);
+    bRemoved |= RemoveFromArray(Pocket3Items);
+    bRemoved |= RemoveFromArray(Pocket4Items);
+
+    return bRemoved;
 }
 
 TArray<UInventoryItemData*> UInventoryComponent::GetEquipmentStorageItems(UEquippableItemData* Equipment)
@@ -550,6 +620,10 @@ bool UInventoryComponent::TryPickupItem(UInventoryItemData* Item)
         return false;
     }
 
+    // Стандартизируем размеры минимум 1x1, чтобы 1x1 кубы не исчезали из-за нулевых значений
+    Item->SizeInCellsX = FMath::Max(1, Item->SizeInCellsX);
+    Item->SizeInCellsY = FMath::Max(1, Item->SizeInCellsY);
+
     // 1) Если предмет экипируемый и слот свободен — экипируем
     if (UEquippableItemData* Eq = Cast<UEquippableItemData>(Item))
     {
@@ -598,15 +672,53 @@ bool UInventoryComponent::TryPickupItem(UInventoryItemData* Item)
         return true;
     }
 
-    // Карманы
-    if (AddToGridLike(PocketsStorageItems, PocketsGridSize, Item))
-    {
-        return true;
-    }
+    // Карманы: 4 отдельных кармана 1x1
+    const FIntPoint OneCell(1,1);
+    if (AddToGridLike(Pocket1Items, OneCell, Item)) return true;
+    if (AddToGridLike(Pocket2Items, OneCell, Item)) return true;
+    if (AddToGridLike(Pocket3Items, OneCell, Item)) return true;
+    if (AddToGridLike(Pocket4Items, OneCell, Item)) return true;
 
     // Не хватает места нигде — не подбираем
     if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Yellow, TEXT("⚠️ TryPickupItem: No space in any storage"));
     return false;
+}
+
+bool UInventoryComponent::MoveItemToVest(UInventoryItemData* Item)
+{
+    if (!Item) return false;
+    if (UEquippableItemData* EquippedVest = GetEquippedItem(Vest))
+    {
+        // Удаляем из всех возможных мест хранения
+        RemoveSpecificFromBackpack(Item);
+        if (UEquippableItemData* EquippedBackpack = GetEquippedItem(Backpack)) { RemoveFromEquipmentStorage(EquippedBackpack, Item); }
+        RemoveFromEquipmentStorage(EquippedVest, Item);
+        // Пытаемся положить в жилет
+        if (EquippedVest->bHasAdditionalStorage)
+        {
+            return AddToEquipmentStorage(EquippedVest, Item);
+        }
+    }
+    return false;
+}
+
+bool UInventoryComponent::MoveItemToPocket(int32 PocketIndex, UInventoryItemData* Item)
+{
+    if (!Item) return false;
+    TArray<TObjectPtr<UInventoryItemData>>* Target = nullptr;
+    switch (PocketIndex)
+    {
+        case 1: Target = &Pocket1Items; break;
+        case 2: Target = &Pocket2Items; break;
+        case 3: Target = &Pocket3Items; break;
+        case 4: Target = &Pocket4Items; break;
+        default: return false;
+    }
+    // Удалим из прочих хранилищ
+    RemoveSpecificFromBackpack(Item);
+    if (UEquippableItemData* EquippedVest = GetEquippedItem(Vest)) { RemoveFromEquipmentStorage(EquippedVest, Item); }
+    if (UEquippableItemData* EquippedBackpack = GetEquippedItem(Backpack)) { RemoveFromEquipmentStorage(EquippedBackpack, Item); }
+    return AddToGridLike(*Target, FIntPoint(1,1), Item);
 }
 
 

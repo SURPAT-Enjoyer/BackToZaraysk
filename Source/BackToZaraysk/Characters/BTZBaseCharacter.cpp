@@ -33,13 +33,13 @@ void ABTZBaseCharacter::ChangeCrouchState()
 	{
 		UnCrouch();
 		//UnProne();
-		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green, TEXT("Crouch OFF"));
+        // debug off
 	}
 	else
 	{
 		Crouch();
 		//UnProne();
-		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green, TEXT("Crouch ON"));
+        // debug off
 	}
 }
 
@@ -49,13 +49,13 @@ void ABTZBaseCharacter::ChangeProneState()
 	{
 		BTZBaseCharMovementComponent->UnProne();
 		//UnCrouch();
-		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Orange, TEXT("Prone OFF"));
+        // debug off
 	}
 	else
 	{
 		BTZBaseCharMovementComponent->Prone();
 		//UnCrouch();
-		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Orange, TEXT("Prone ON"));
+        // debug off
 	}
 }
 
@@ -79,8 +79,7 @@ void ABTZBaseCharacter::BeginPlay()
 	Super::BeginPlay();
 	CurrentStamina = MaxStamina;
 	//Capsule = GetCapsuleComponent();
-	float test = GetMesh()->GetRelativeLocation().Z;
-	GEngine->AddOnScreenDebugMessage(1, 1.0f, FColor::Red, FString::Printf(TEXT("%.2f"), test));
+    // debug off
 	// ИСПРАВЛЕНО: Оптимизированное расстояние трассировки для лучшего обнаружения
 	// Используем большее расстояние для более надежного обнаружения неровностей
 	IKTraceDistance = 100.0f; // Увеличено для лучшего обнаружения земли
@@ -91,7 +90,7 @@ void ABTZBaseCharacter::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 	BTZBaseCharMovementComponent->GetMaxSpeed();
 	TryChangeSprintState(DeltaTime);
-	GEngine->AddOnScreenDebugMessage(0, 1.0f, FColor::Yellow, FString::Printf(TEXT("Stamina: %.2f"), CurrentStamina));
+    // debug off
 	if (!BTZBaseCharMovementComponent->IsSprinting() || !BTZBaseCharMovementComponent->IsFalling())
 	{
 		CurrentStamina += StaminaRestoreVelocity * DeltaTime;
@@ -139,20 +138,7 @@ void ABTZBaseCharacter::Tick(float DeltaTime)
 	}
 
 	// Debug IK - show raw and interpolated values
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(2, 1.0f, FColor::White, FString::Printf(TEXT("IK Final - Left: %.2f, Right: %.2f"), IKLeftFootOffset, IKRightFootOffset));
-		GEngine->AddOnScreenDebugMessage(3, 1.0f, FColor::Green, FString::Printf(TEXT("IK Scale: %.2f, TraceDist: %.2f"), IKScale, IKTraceDistance));
-
-		// Check if sockets exist
-		if (GetMesh())
-		{
-			bool bLeftSocketExists = GetMesh()->DoesSocketExist(LeftFootSocketName);
-			bool bRightSocketExists = GetMesh()->DoesSocketExist(RightFootSocketName);
-			GEngine->AddOnScreenDebugMessage(4, 1.0f, FColor::Orange, FString::Printf(TEXT("Sockets exist - Left: %s, Right: %s"),
-				bLeftSocketExists ? TEXT("YES") : TEXT("NO"), bRightSocketExists ? TEXT("YES") : TEXT("NO")));
-		}
-	}
+    // debug off
 }
 
 void ABTZBaseCharacter::OnSprintStart_Implementation()
@@ -185,7 +171,7 @@ void ABTZBaseCharacter::TryChangeSprintState(float DeltaTime)
 	}
 	if (CurrentStamina <= StaminaTiredThreshold)
 	{
-		GEngine->AddOnScreenDebugMessage(1, 1.0f, FColor::Red, FString::Printf(TEXT("Stamina is 20%")));
+        // debug off
 		BTZBaseCharMovementComponent->SetIsOutOfStamina(true);
 		BTZBaseCharMovementComponent->CanAttemptJump();
 	}
@@ -232,13 +218,7 @@ float ABTZBaseCharacter::GetIKOffsetForASocket(const FName& SocketName)
     FVector TraceEnd = SocketLocation - FVector(0.f, 0.f, IKTraceDistance);
 
     // Debug trace visualization
-    if (GEngine && SocketName == LeftFootSocketName)
-    {
-    	GEngine->AddOnScreenDebugMessage(9, 1.0f, FColor::Purple, FString::Printf(TEXT("Trace: Start(%.1f, %.1f, %.1f) -> End(%.1f, %.1f, %.1f)"),
-    		TraceStart.X, TraceStart.Y, TraceStart.Z, TraceEnd.X, TraceEnd.Y, TraceEnd.Z));
-    	GEngine->AddOnScreenDebugMessage(12, 1.0f, FColor::Yellow, FString::Printf(TEXT("Socket Location: (%.1f, %.1f, %.1f)"), 
-    		SocketLocation.X, SocketLocation.Y, SocketLocation.Z));
-    }
+    // debug off
     
 	FHitResult HitResult;
 	// ИСПРАВЛЕНО: Используем более широкий диапазон коллизий для лучшего обнаружения
@@ -259,11 +239,7 @@ float ABTZBaseCharacter::GetIKOffsetForASocket(const FName& SocketName)
         // Clamp result to reasonable bounds (в сантиметрах) - увеличены границы
         Result = FMath::Clamp(Result, -25.0f, 25.0f);
 
-        if (GEngine && SocketName == LeftFootSocketName)
-        {
-        	GEngine->AddOnScreenDebugMessage(4, 1.0f, FColor::Blue, FString::Printf(TEXT("IK Hit: SocketZ=%.1f, HitZ=%.1f, RawOffset=%.1f, Result=%.2f"),
-        		SocketLocation.Z, HitResult.Location.Z, RawOffset, Result));
-        }
+        // debug off
 	}
     else
     {
@@ -277,17 +253,11 @@ float ABTZBaseCharacter::GetIKOffsetForASocket(const FName& SocketName)
     		// Clamp result to reasonable bounds
     		Result = FMath::Clamp(Result, -25.0f, 25.0f);
 
-    		if (GEngine && SocketName == LeftFootSocketName)
-    		{
-    			GEngine->AddOnScreenDebugMessage(5, 1.0f, FColor::Orange, FString::Printf(TEXT("IK Fallback Hit: RawOffset=%.1f, Result=%.2f"), RawOffset, Result));
-    		}
+            // debug off
     	}
     	else
     	{
-    		if (GEngine && SocketName == LeftFootSocketName)
-    		{
-    			GEngine->AddOnScreenDebugMessage(6, 1.0f, FColor::Red, TEXT("IK No hit at all!"));
-    		}
+            // debug off
     		// Если не найдена земля, возвращаем 0 - нога остается в исходном положении
     		Result = 0.0f;
     	}
@@ -337,12 +307,7 @@ void ABTZBaseCharacter::UpdateAnimationBlueprintIK()
 			LeftFootPtr->Z = IKLeftFootOffset;
 			RightFootPtr->Z = IKRightFootOffset;
 
-			if (GEngine)
-			{
-				GEngine->AddOnScreenDebugMessage(7, 1.0f, FColor::Magenta, 
-					FString::Printf(TEXT("IK Updated in ABP - Left: %.2f, Right: %.2f"), 
-						IKLeftFootOffset, IKRightFootOffset));
-			}
+            // debug off
 		}
 	}
 	else
@@ -357,20 +322,11 @@ void ABTZBaseCharacter::UpdateAnimationBlueprintIK()
 			AnimInstance->ProcessEvent(SetLeftFootIK, &IKLeftFootOffset);
 			AnimInstance->ProcessEvent(SetRightFootIK, &IKRightFootOffset);
 			
-			if (GEngine)
-			{
-				GEngine->AddOnScreenDebugMessage(11, 1.0f, FColor::Cyan, 
-					FString::Printf(TEXT("IK Updated via Blueprint functions - Left: %.2f, Right: %.2f"), 
-						IKLeftFootOffset, IKRightFootOffset));
-			}
+            // debug off
 		}
 		else
 		{
-			if (GEngine)
-			{
-				GEngine->AddOnScreenDebugMessage(8, 1.0f, FColor::Red, 
-					TEXT("IK Properties not found in Animation Blueprint! Need to create LeftFootEffectorLocation and RightFootEffectorLocation variables."));
-			}
+            // debug off
 		}
 	}
 }
@@ -403,11 +359,7 @@ void ABTZBaseCharacter::SetRotationBlocked(bool bBlocked)
 {
 	bRotationBlocked = bBlocked;
 	
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Yellow, 
-			FString::Printf(TEXT("Character rotation %s"), bBlocked ? TEXT("BLOCKED") : TEXT("UNBLOCKED")));
-	}
+    // debug off
 }
 
 void ABTZBaseCharacter::SetHeadRotation(float Yaw, float Pitch)
@@ -417,15 +369,7 @@ void ABTZBaseCharacter::SetHeadRotation(float Yaw, float Pitch)
 	HeadPitchRotation = Pitch;
 	
 	// Применяем поворот головы через Transform (Modify) Bone
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green, 
-			FString::Printf(TEXT("Head Rotation: Yaw=%.1f°, Pitch=%.1f°"), HeadYawRotation, HeadPitchRotation));
-		
-		// Дополнительная диагностика для Blueprint
-		GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Yellow, 
-			FString::Printf(TEXT("Blueprint Values: HeadYaw=%.3f, HeadPitch=%.3f"), HeadYawRotation, HeadPitchRotation));
-	}
+    // debug off
 }
 
 void ABTZBaseCharacter::ResetHeadRotation()
@@ -433,8 +377,5 @@ void ABTZBaseCharacter::ResetHeadRotation()
 	HeadYawRotation = 0.0f;
 	HeadPitchRotation = 0.0f;
 	
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green, TEXT("Head rotation reset"));
-	}
+    // debug off
 }

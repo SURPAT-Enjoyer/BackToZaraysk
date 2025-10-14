@@ -15,6 +15,7 @@
 #include "Components/VerticalBoxSlot.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupCube.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupParallelepiped.h"
+#include "BackToZaraysk/GameData/Items/Test/PickupBase.h"
 #include "BackToZaraysk/Inventory/EquippableItemData.h"
 #include "BackToZaraysk/Components/EquipmentComponent.h"
 #include "BackToZaraysk/Characters/PlayerCharacter.h"
@@ -177,10 +178,27 @@ void UInventoryItemWidget::OnDropClicked()
             {
                 if (InvComp->UnequipItemToInventory(Backpack, true))
                 {
-                    bItemRemoved = true;
-                    // Обновляем UI экипировки и грид рюкзака
+                    // Pickup рюкзака уже заспавнен в EquipmentComponent с переносом ItemInstance.
+                    // Здесь НИЧЕГО дополнительно не спавним, чтобы не было дублей и потери содержимого.
+                    // Обновляем UI и выходим.
                     Parent->UpdateEquipmentSlots();
                     Parent->UpdateBackpackStorageGrid();
+                    Parent->RefreshInventoryUI();
+
+                    // Закрыть меню
+                    if (UCanvasPanel* RootLocal = Cast<UCanvasPanel>(Parent->WidgetTree->RootWidget))
+                    {
+                        TArray<UWidget*> Children2 = RootLocal->GetAllChildren();
+                        for (UWidget* W2 : Children2)
+                        {
+                            if (W2 && W2->GetFName() == TEXT("ContextMenu"))
+                            {
+                                RootLocal->RemoveChild(W2);
+                                break;
+                            }
+                        }
+                    }
+                    return; // критично: не выполнять дальнейший код спавна
                 }
             }
         }
@@ -202,21 +220,21 @@ void UInventoryItemWidget::OnDropClicked()
         }
         else
         {
-            // Обычный предмет из инвентаря
-            if (InvComp->RemoveSpecificFromBackpack(ItemData))
+            // Удаляем предмет из любого хранения (рюкзак, хранилища, пояс, карманы)
+            if (InvComp->RemoveFromAnyStorage(ItemData))
             {
                 bItemRemoved = true;
                 if (GEngine)
                 {
                     GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Orange, 
-                        FString::Printf(TEXT("🗑️ Предмет %s удален из инвентаря и выброшен"), *ItemData->DisplayName.ToString()));
+                        FString::Printf(TEXT("🗑️ Предмет %s удален из хранения и выброшен"), *ItemData->DisplayName.ToString()));
                 }
             }
         }
         
         if (bItemRemoved)
         {
-            // Спавним предмет перед игроком
+            // Спавним предмет перед игроком (для НЕ-рюкзака). Для рюкзака спавн уже сделан выше и сюда мы не попадём.
             FVector ViewLoc; FRotator ViewRot; PC->GetPlayerViewPoint(ViewLoc, ViewRot);
                             const FVector SpawnLoc = ViewLoc + ViewRot.Vector() * 80.f;
             FActorSpawnParameters S; 
@@ -226,9 +244,14 @@ void UInventoryItemWidget::OnDropClicked()
                             extern TSubclassOf<AActor> GetPickupClassForItem_Internal(const UInventoryItemData* ItemData);
                             TSubclassOf<AActor> DropClass = GetPickupClassForItem_Internal(ItemData);
             
-                            if (UWorld* World = GetWorld())
-                            {
-                                World->SpawnActor<AActor>(DropClass, SpawnLoc, ViewRot, S);
+            if (UWorld* World = GetWorld())
+            {
+                if (APickupBase* Spawned = World->SpawnActor<APickupBase>(DropClass, SpawnLoc, ViewRot, S))
+                {
+                    // Передаём текущий экземпляр данных, чтобы размеры (в т.ч. 2x2) сохранились
+                    Spawned->ItemInstance = ItemData;
+                    Spawned->ApplyItemInstanceVisuals();
+                }
             }
             
             // Обновляем UI (принудительно)
@@ -506,17 +529,17 @@ FReply UInventoryItemWidget::NativeOnKeyDown(const FGeometry& InGeometry, const 
 {
     if (InKeyEvent.GetKey() == EKeys::R && ItemData && ItemData->bRotatable)
     {
-        // Передаем обработку вращения родительскому виджету инвентаря
-        if (UInventoryWidget* ParentInv = GetTypedOuter<UInventoryWidget>())
-        {
-            // Устанавливаем себя как hovered item для корректной обработки
-            ParentInv->SetHoveredItem(this);
-            return ParentInv->HandleItemRotation(InGeometry, InKeyEvent);
-        }
-        
-        // Fallback: локальная обработка если родитель не найден
+        // Локальная обработка вращения и обновление DragVisual, если активен drag
         bRotated = !bRotated;
         UpdateVisualSize(FVector2D(60.f, 60.f));
+        if (UDragDropOperation* Op = UWidgetBlueprintLibrary::GetDragDroppingContent())
+        {
+            if (UInventoryItemWidget* DragVisual = Cast<UInventoryItemWidget>(Op->DefaultDragVisual))
+            {
+                DragVisual->bRotated = bRotated;
+                DragVisual->UpdateVisualSize(FVector2D(60.f, 60.f));
+            }
+        }
         return FReply::Handled();
     }
     return Super::NativeOnKeyDown(InGeometry, InKeyEvent);
@@ -542,9 +565,9 @@ void UInventoryItemWidget::NativeOnDragDetected(const FGeometry& InGeometry, con
             DragVisual->SetVisibility(ESlateVisibility::HitTestInvisible);
             Op->DefaultDragVisual = DragVisual;
         }
-        Op->Payload = this;
-        Op->Pivot = EDragPivot::MouseDown;
-        OutOperation = Op;
+    Op->Payload = this;
+    Op->Pivot = EDragPivot::MouseDown;
+    OutOperation = Op;
     }
     // Подсветка исходного виджета
     SetTint(FLinearColor(1.f, 1.f, 0.f, 1.f));

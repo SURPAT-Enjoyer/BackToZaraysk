@@ -57,9 +57,22 @@ public:
 	
 	UFUNCTION(BlueprintCallable, Category="Equipment Storage")
 	bool RemoveFromEquipmentStorage(UEquippableItemData* Equipment, UInventoryItemData* Item);
+    // Полное удаление: из оперативного и персистентного хранилища, с очисткой позиций
+    UFUNCTION(BlueprintCallable, Category="Equipment Storage")
+    bool RemoveCompletelyFromEquipmentStorage(UEquippableItemData* Equipment, UInventoryItemData* Item);
 	
 	UFUNCTION(BlueprintCallable, Category="Equipment Storage")
 	TArray<UInventoryItemData*> GetEquipmentStorageItems(UEquippableItemData* Equipment);
+
+    // Удалить предмет из любого хранения (рюкзак, хранилища экипировки, пояс и карманы)
+    UFUNCTION(BlueprintCallable, Category="Inventory")
+    bool RemoveFromAnyStorage(UInventoryItemData* Item);
+
+    // Перемещение предметов по DnD
+    UFUNCTION(BlueprintCallable, Category="Inventory")
+    bool MoveItemToVest(UInventoryItemData* Item);
+    UFUNCTION(BlueprintCallable, Category="Inventory")
+    bool MoveItemToPocket(int32 PocketIndex, UInventoryItemData* Item);
 
 	// Получить экипированный предмет
 	UFUNCTION(BlueprintCallable, Category="Equipment")
@@ -76,9 +89,12 @@ public:
 private:
     // Простейшие хранилища пояса и карманов (гриды фиксированного размера)
     FIntPoint BeltGridSize = FIntPoint(8, 2);
-    FIntPoint PocketsGridSize = FIntPoint(4, 1);
-    TArray<TObjectPtr<UInventoryItemData>> BeltStorageItems;
-    TArray<TObjectPtr<UInventoryItemData>> PocketsStorageItems;
+    // Переходим к четырём карманам 1x1
+    TArray<TObjectPtr<UInventoryItemData>> BeltStorageItems; // 8x2 как раньше
+    TArray<TObjectPtr<UInventoryItemData>> Pocket1Items; // 1x1
+    TArray<TObjectPtr<UInventoryItemData>> Pocket2Items; // 1x1
+    TArray<TObjectPtr<UInventoryItemData>> Pocket3Items; // 1x1
+    TArray<TObjectPtr<UInventoryItemData>> Pocket4Items; // 1x1
 
     bool HasSpaceInGridLike(const FIntPoint& GridSize, const TArray<TObjectPtr<UInventoryItemData>>& Items, int32 ItemSizeX, int32 ItemSizeY) const;
     bool AddToGridLike(TArray<TObjectPtr<UInventoryItemData>>& Items, const FIntPoint& GridSize, UInventoryItemData* Item);

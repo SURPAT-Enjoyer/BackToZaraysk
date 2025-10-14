@@ -89,6 +89,36 @@ void ABTZPlayerController::Interact()
         class APickupBase* Pickup = Cast<class APickupBase>(Hit.GetActor());
         if (Pickup)
         {
+            // Специальная обработка рюкзака: используем его ItemInstance/логику, чтобы не потерять содержимое
+            if (APickupBackpack* BackpackPickup = Cast<APickupBackpack>(Pickup))
+            {
+                UInventoryComponent* Inv = CachedBaseCharacter->FindComponentByClass<UInventoryComponent>();
+                if (Inv)
+                {
+                    BackpackPickup->OnPickedUp(Inv);
+                    return; // обработано внутри
+                }
+            }
+            // Если у pickup есть готовый экземпляр ItemInstance — используем его напрямую
+            if (Pickup->ItemInstance)
+            {
+                UInventoryComponent* Inv = CachedBaseCharacter->FindComponentByClass<UInventoryComponent>();
+                if (Inv)
+                {
+                    UInventoryItemData* Existing = Pickup->ItemInstance;
+                    // Нормализация размеров
+                    Existing->SizeInCellsX = FMath::Max(1, Existing->SizeInCellsX);
+                    Existing->SizeInCellsY = FMath::Max(1, Existing->SizeInCellsY);
+                    if (Inv->TryPickupItem(Existing) || Inv->AddToBackpack(Existing))
+                    {
+                        if (InventoryWidgetInstance) { InventoryWidgetInstance->RefreshInventoryUI(); }
+                        // Сбрасываем ссылку в пикапе и уничтожаем его
+                        Pickup->ItemInstance = nullptr;
+                        Pickup->Destroy();
+                        return;
+                    }
+                }
+            }
             UInventoryComponent* Inv = CachedBaseCharacter->FindComponentByClass<UInventoryComponent>();
             if (Inv)
             {
@@ -107,13 +137,10 @@ void ABTZPlayerController::Interact()
                                 NewObj ? *NewObj->GetClass()->GetName() : TEXT("null")));
                     }
                     
-                    // Единая логика подбора с приоритетами
+                    // Единая логика подбора с приоритетами (первая попытка)
                     if (Inv->TryPickupItem(Data))
                     {
-                        if (InventoryWidgetInstance)
-                        {
-                            InventoryWidgetInstance->RefreshInventoryUI();
-                        }
+                        if (InventoryWidgetInstance) { InventoryWidgetInstance->RefreshInventoryUI(); }
                         Pickup->Destroy();
                         return;
                     }
@@ -149,6 +176,13 @@ void ABTZPlayerController::Interact()
                                             FString::Printf(TEXT("🔧 Data Asset properties copied! EquippedMesh: %s"), 
                                                 EquipData->EquippedMesh ? TEXT("SET") : TEXT("NULL")));
                                     }
+                                }
+                                // После копирования из DataAsset — повторяем попытку приоритезированного подбора (экипировка жилета при свободном слоте)
+                                if (Inv->TryPickupItem(Data))
+                                {
+                                    if (InventoryWidgetInstance) { InventoryWidgetInstance->RefreshInventoryUI(); }
+                                    Pickup->Destroy();
+                                    return;
                                 }
                             }
                         }
@@ -273,6 +307,13 @@ void ABTZPlayerController::Interact()
                                             FString::Printf(TEXT("❌ Failed to load mesh from path: %s"), *MeshPath));
                                     }
                                 }
+                                // Повторяем попытку приоритезированного подбора
+                                if (Inv->TryPickupItem(Data))
+                                {
+                                    if (InventoryWidgetInstance) { InventoryWidgetInstance->RefreshInventoryUI(); }
+                                    Pickup->Destroy();
+                                    return;
+                                }
                             }
                             if (GEngine)
                             {
@@ -301,6 +342,29 @@ void ABTZPlayerController::Interact()
                         Data->Icon = White;
                     }
                 }
+                // Если это экипируемый предмет — ещё раз пробуем приоритетную логику (экипировать жилет, если слот свободен)
+                if (UEquippableItemData* MaybeEquip = Cast<UEquippableItemData>(Data))
+                {
+                    if (Inv->TryPickupItem(MaybeEquip))
+                    {
+                        if (InventoryWidgetInstance) { InventoryWidgetInstance->RefreshInventoryUI(); }
+                        Pickup->Destroy();
+                        return;
+                    }
+                }
+
+                // Иначе кладём в рюкзак как ранее (гарантия для 1x1 и любых обычных предметов)
+                // Если это мелкий (1x1) предмет — сразу в обычный рюкзак как в список, чтобы не «исчезал»
+                if (Data && Data->SizeInCellsX == 1 && Data->SizeInCellsY == 1)
+                {
+                    if (Inv->AddToBackpack(Data))
+                    {
+                        Pickup->Destroy();
+                        if (InventoryWidgetInstance) { InventoryWidgetInstance->RefreshInventoryUI(); }
+                        return;
+                    }
+                }
+                // Общая попытка положить в рюкзак
                 if (Inv->AddToBackpack(Data))
                 {
                     Pickup->Destroy();

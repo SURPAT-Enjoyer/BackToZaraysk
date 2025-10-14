@@ -10,6 +10,11 @@ APickupBase::APickupBase()
     Mesh->SetEnableGravity(true);
 }
 
+void APickupBase::ApplyItemInstanceVisuals()
+{
+    // Базовая реализация — ничего не делает
+}
+
 
 
 
