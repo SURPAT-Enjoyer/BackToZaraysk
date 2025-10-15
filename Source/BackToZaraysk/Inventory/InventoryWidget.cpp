@@ -225,6 +225,7 @@ void UInventoryWidget::NativeOnInitialized()
                             BGS->SetOffsets(FMargin(0.f));
                         }
                     }
+                    // Регистрируем в координатах корневого канваса (пока используем простые координаты)
                     RegisterGrid(Name, FVector2D(X, PocketsTop), FVector2D(60.f, 60.f), 1, 1);
                 };
                 AddPocket(TEXT("карман1"), StartX + StepX * 0);

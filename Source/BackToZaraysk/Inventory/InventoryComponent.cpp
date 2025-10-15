@@ -639,14 +639,7 @@ bool UInventoryComponent::TryPickupItem(UInventoryItemData* Item)
         }
     }
 
-    // 2) Хранилище по умолчанию — карманы (по одному 1x1)
-    const FIntPoint OneCell(1,1);
-    if (AddToGridLike(Pocket1Items, OneCell, Item)) return true;
-    if (AddToGridLike(Pocket2Items, OneCell, Item)) return true;
-    if (AddToGridLike(Pocket3Items, OneCell, Item)) return true;
-    if (AddToGridLike(Pocket4Items, OneCell, Item)) return true;
-
-    // 3) Если в карманах нет места — пробуем доп. хранилище экипированного рюкзака
+    // 2) Если экипирован рюкзак — пробуем доп. хранилище экипированного рюкзака
     if (UEquippableItemData* EquippedBackpack = GetEquippedItem(Backpack))
     {
         if (EquippedBackpack->bHasAdditionalStorage)
@@ -658,7 +651,14 @@ bool UInventoryComponent::TryPickupItem(UInventoryItemData* Item)
         }
     }
 
-    // 4) Если в рюкзаке нет места или он не экипирован — пробуем жилет
+    // 3) Если в рюкзаке нет места или он не экипирован — пробуем карманы (по одному 1x1)
+    const FIntPoint OneCell(1,1);
+    if (AddToGridLike(Pocket1Items, OneCell, Item)) return true;
+    if (AddToGridLike(Pocket2Items, OneCell, Item)) return true;
+    if (AddToGridLike(Pocket3Items, OneCell, Item)) return true;
+    if (AddToGridLike(Pocket4Items, OneCell, Item)) return true;
+
+    // 4) Если в карманах нет места — пробуем жилет
     if (UEquippableItemData* EquippedVest = GetEquippedItem(Vest))
     {
         if (EquippedVest->bHasAdditionalStorage)
@@ -705,10 +705,18 @@ bool UInventoryComponent::MoveItemToPocket(int32 PocketIndex, UInventoryItemData
         case 4: Target = &Pocket4Items; break;
         default: return false;
     }
-    // Удалим из прочих хранилищ
+    
+    // Удаляем из всех других карманов
+    Pocket1Items.Remove(Item);
+    Pocket2Items.Remove(Item);
+    Pocket3Items.Remove(Item);
+    Pocket4Items.Remove(Item);
+    
+    // Удаляем из других хранилищ
     RemoveSpecificFromBackpack(Item);
     if (UEquippableItemData* EquippedVest = GetEquippedItem(Vest)) { RemoveFromEquipmentStorage(EquippedVest, Item); }
     if (UEquippableItemData* EquippedBackpack = GetEquippedItem(Backpack)) { RemoveFromEquipmentStorage(EquippedBackpack, Item); }
+    
     return AddToGridLike(*Target, FIntPoint(1,1), Item);
 }
 
