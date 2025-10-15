@@ -82,7 +82,7 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
                 UVerticalBox* VBox = Parent->WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("ContextMenuVBox"));
                 Menu->SetContent(VBox);
 
-                // Кнопки для экипируемых предметов
+                        // Кнопки для экипируемых предметов
                 UEquippableItemData* EquippableItem = Cast<UEquippableItemData>(ItemData);
                 if (ItemData && EquippableItem)
                 {
@@ -95,13 +95,14 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
                         UnequipTxt->SetText(FText::FromString(TEXT("Снять")));
                         UnequipBtn->AddChild(UnequipTxt);
                         VBox->AddChildToVerticalBox(UnequipBtn);
-                        // Для рюкзака в слоте делаем кнопку неактивной и визуально тусклой
-                        if (EquippableItem->EquipmentSlot == Backpack)
-                        {
-                            UnequipBtn->SetIsEnabled(false);
-                            UnequipBtn->SetRenderOpacity(0.5f);
-                            UnequipTxt->SetColorAndOpacity(FLinearColor(0.6f, 0.6f, 0.6f, 0.7f));
-                        }
+                                // Кнопка активна только для жилета в соответствующем слоте; для остальных — неактивна
+                                const bool bIsEquippedVest = (EquippableItem->EquipmentSlot == Vest);
+                                UnequipBtn->SetIsEnabled(bIsEquippedVest);
+                                if (!bIsEquippedVest)
+                                {
+                                    UnequipBtn->SetRenderOpacity(0.5f);
+                                    UnequipTxt->SetColorAndOpacity(FLinearColor(0.6f, 0.6f, 0.6f, 0.7f));
+                                }
                         UnequipBtn->OnClicked.Clear();
                         UnequipBtn->OnClicked.AddDynamic(this, &UInventoryItemWidget::OnUnequipClicked);
                     }
@@ -412,8 +413,18 @@ void UInventoryItemWidget::OnUnequipClicked()
             {
                 UInventoryComponent* InvComp = PlayerChar->InventoryComponent;
                 
-                // Снимаем предмет
-                if (InvComp->UnequipItemToInventory(EquippableItem->EquipmentSlot, false))
+                // Снимаем жилет: если есть рюкзак — кладём в инвентарь, иначе — выбрасываем в мир
+                bool bUnequipped = false;
+                if (EquippableItem->EquipmentSlot == Vest)
+                {
+                    const bool bHasBackpack = (InvComp->GetEquippedItem(Backpack) != nullptr);
+                    bUnequipped = InvComp->UnequipItemToInventory(Vest, bHasBackpack ? false : true);
+                }
+                else
+                {
+                    bUnequipped = InvComp->UnequipItemToInventory(EquippableItem->EquipmentSlot, false);
+                }
+                if (bUnequipped)
                 {
                     if (GEngine)
                     {

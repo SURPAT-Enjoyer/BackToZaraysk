@@ -198,6 +198,7 @@ void UInventoryWidget::NativeOnInitialized()
             };
             // Убираем грид разгрузки из центральной части
             // AddLabeledGrid(TEXT("разгрузка"), 0.f, FVector2D(480.f, 240.f), 8, 4, TEXT("разгрузка"), false);
+            // Пояс: стиль задаёт ориентир — полупрозрачный тёмный слот и подпись
             AddLabeledGrid(TEXT("пояс"), 280.f, FVector2D(480.f, 120.f), 8, 2, TEXT("пояс"), false);
             // Карманы: вручную создаём четыре отдельных грида 1x1 по линии слева направо
             {
@@ -207,6 +208,8 @@ void UInventoryWidget::NativeOnInitialized()
                 auto AddPocket = [&](const TCHAR* Name, float X)
                 {
                     UCanvasPanel* Grid = WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), FName(Name));
+                    // Контейнер кармана не должен перехватывать хиты, только его дети (иконки предметов)
+                    Grid->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
                     if (UCanvasPanelSlot* GS = RightPanel->AddChildToCanvas(Grid))
                     {
                         GS->SetAnchors(FAnchors(0.f, 0.f, 0.f, 0.f));
@@ -215,18 +218,25 @@ void UInventoryWidget::NativeOnInitialized()
                         GS->SetSize(FVector2D(60.f, 60.f));
                         GS->SetAutoSize(false);
                     }
-                    // фон
+                    // фон как у пояса (единообразный стиль)
                     if (UBorder* Bg = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), FName(*FString::Printf(TEXT("%s_bg"), Name))))
                     {
-                        Bg->SetBrushColor(FLinearColor(1.f,1.f,1.f,0.06f));
+                        // Стиль фона как у пояса: лёгкий серый
+                        Bg->SetBrushColor(FLinearColor(1.f,1.f,1.f,0.05f));
+                        // Фон полностью прозрачно-хиттест невидим, чтобы не блокировать взаимодействие с предметами
+                        Bg->SetVisibility(ESlateVisibility::HitTestInvisible);
                         if (UCanvasPanelSlot* BGS = Grid->AddChildToCanvas(Bg))
                         {
                             BGS->SetAnchors(FAnchors(0.f,0.f,1.f,1.f));
                             BGS->SetOffsets(FMargin(0.f));
                         }
                     }
-                    // Регистрируем в координатах корневого канваса (пока используем простые координаты)
-                    RegisterGrid(Name, FVector2D(X, PocketsTop), FVector2D(60.f, 60.f), 1, 1);
+                    // Регистрируем в координатах корневого канваса (смещение от RightPanel)
+                    if (UCanvasPanelSlot* RightBase = Cast<UCanvasPanelSlot>(RightPanel->Slot))
+                    {
+                        const FVector2D RootPos = RightBase->GetPosition() + FVector2D(X, PocketsTop);
+                        RegisterGrid(Name, RootPos, FVector2D(60.f, 60.f), 1, 1);
+                    }
                 };
                 AddPocket(TEXT("карман1"), StartX + StepX * 0);
                 AddPocket(TEXT("карман2"), StartX + StepX * 1);
@@ -512,11 +522,16 @@ void UInventoryWidget::UpdateEquipmentSlots()
 {
     UpdateStaticEquipmentSlots();
 
-    // Очищаем виджет в слоте рюкзака, если он уже есть
+    // Очищаем виджеты в слотах, если они уже есть
     if (BackpackSlotRef && BackpackItemWidgetRef)
     {
         BackpackSlotRef->ClearChildren();
         BackpackItemWidgetRef = nullptr;
+    }
+    if (VestSlotRef && VestItemWidgetRef)
+    {
+        VestSlotRef->ClearChildren();
+        VestItemWidgetRef = nullptr;
     }
 
     // Получаем экипированный рюкзак и отображаем его в слоте
@@ -530,8 +545,8 @@ void UInventoryWidget::UpdateEquipmentSlots()
                 if (VestSlotRef)
                 {
                     UInventoryItemWidget* ItemW = WidgetTree->ConstructWidget<UInventoryItemWidget>(UInventoryItemWidget::StaticClass());
-                    ItemW->ItemData = EquippedVest;
                     ItemW->bIsStaticEquipmentSlot = true;
+                    ItemW->Init(EquippedVest, EquippedVest->Icon, EquipmentSlotSize);
                     VestSlotRef->SetContent(ItemW);
                     VestItemWidgetRef = ItemW;
                 }
@@ -687,10 +702,10 @@ void UInventoryWidget::UpdateBackpackStorageGrid()
                 }
                 BackpackStorageGrid = nullptr;
 
-                // Добавляем полупрозрачный фон для визуализации области грида
+                // Добавляем фон в стиле пояса для визуализации области грида
                 if (UBorder* GridBackground = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("BackpackGridBackground")))
                 {
-                    GridBackground->SetBrushColor(FLinearColor(0.0f, 0.6f, 1.0f, 0.20f));
+                    GridBackground->SetBrushColor(FLinearColor(1.f,1.f,1.f,0.05f));
                     GridBackground->SetVisibility(ESlateVisibility::HitTestInvisible);
                     if (UCanvasPanelSlot* BgSlot = GridCanvas->AddChildToCanvas(GridBackground))
                     {
@@ -776,6 +791,94 @@ void UInventoryWidget::UpdateBackpackStorageGrid()
                         curX = 0;
                         curY += 1;
                         if (curY >= GridY) break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+bool UInventoryWidget::IsAreaFreeInBackpack(const UEquippableItemData* BackpackData,
+                              int32 StartCellX,
+                              int32 StartCellY,
+                              int32 SizeX,
+                              int32 SizeY,
+                              const UInventoryItemData* IgnoredItem) const
+{
+    if (!BackpackData) return false;
+    const int32 GridX = FMath::Max(1, BackpackData->AdditionalGridSize.X);
+    const int32 GridY = FMath::Max(1, BackpackData->AdditionalGridSize.Y);
+    if (StartCellX < 0 || StartCellY < 0) return false;
+    if (StartCellX + SizeX > GridX || StartCellY + SizeY > GridY) return false;
+
+    // Проверяем пересечения с уже размещёнными элементами по StoredCellByItem
+    for (const TPair<TObjectPtr<UInventoryItemData>, FIntPoint>& Pair : BackpackData->StoredCellByItem)
+    {
+        UInventoryItemData* Other = Pair.Key;
+        if (!Other || Other == IgnoredItem) continue;
+        const FIntPoint OtherCell = Pair.Value;
+        const int32 OtherSizeX = FMath::Max(1, Other->SizeInCellsX);
+        const int32 OtherSizeY = FMath::Max(1, Other->SizeInCellsY);
+        const bool bOverlapX = !(StartCellX + SizeX <= OtherCell.X || OtherCell.X + OtherSizeX <= StartCellX);
+        const bool bOverlapY = !(StartCellY + SizeY <= OtherCell.Y || OtherCell.Y + OtherSizeY <= StartCellY);
+        if (bOverlapX && bOverlapY)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+void UInventoryWidget::RemoveExistingItemWidget(UInventoryItemData* ItemData)
+{
+    if (!ItemData || !RightPanelRef) return;
+    // Удаляем из правой панели (карманы/жилетные гриды живут там)
+    const int32 Count = RightPanelRef->GetChildrenCount();
+    for (int32 i = 0; i < Count; ++i)
+    {
+        if (UWidget* Child = RightPanelRef->GetChildAt(i))
+        {
+            if (UCanvasPanel* Panel = Cast<UCanvasPanel>(Child))
+            {
+                TArray<UWidget*> Children = Panel->GetAllChildren();
+                for (UWidget* W : Children)
+                {
+                    if (UInventoryItemWidget* I = Cast<UInventoryItemWidget>(W))
+                    {
+                        if (I->ItemData == ItemData)
+                        {
+                            Panel->RemoveChild(I);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Также удаляем из рут-канвы (BackpackStorageCanvas)
+    if (UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(WidgetTree ? WidgetTree->RootWidget : nullptr))
+    {
+        const int32 RCount = RootCanvas->GetChildrenCount();
+        for (int32 i = 0; i < RCount; ++i)
+        {
+            if (UWidget* Child = RootCanvas->GetChildAt(i))
+            {
+                if (Child->GetFName() == TEXT("BackpackStorageCanvas"))
+                {
+                    if (UCanvasPanel* Grid = Cast<UCanvasPanel>(Child))
+                    {
+                        TArray<UWidget*> GChildren = Grid->GetAllChildren();
+                        for (UWidget* W : GChildren)
+                        {
+                            if (UInventoryItemWidget* I = Cast<UInventoryItemWidget>(W))
+                            {
+                                if (I->ItemData == ItemData)
+                                {
+                                    Grid->RemoveChild(I);
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -900,31 +1003,105 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
     UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(WidgetTree ? WidgetTree->RootWidget : nullptr);
     if (!RootCanvas) return false;
 
-    UCanvasPanel* GridCanvas = nullptr;
-    const int32 NumChildren = RootCanvas->GetChildrenCount();
-    for (int32 i = 0; i < NumChildren; ++i)
-    {
-        if (UWidget* C = RootCanvas->GetChildAt(i))
-        {
-            if (C->GetFName() == TEXT("BackpackStorageCanvas"))
-            {
-                GridCanvas = Cast<UCanvasPanel>(C);
-                break;
-            }
-        }
-    }
-    if (!GridCanvas) return false;
-
-    // Позиция курсора в локальных координатах канвы грида
-    const FVector2D GridLocal = GridCanvas->GetCachedGeometry().AbsoluteToLocal(ScreenPos);
-
     // Находим зарегистрированную область грида в корневых координатах (для размера/кол-ва ячеек)
     const FVector2D RootLocal = RootCanvas->GetCachedGeometry().AbsoluteToLocal(ScreenPos);
-    const int32 GridIdx = FindGridAtPoint(RootLocal);
-    if (GridIdx == INDEX_NONE) return false;
+    int32 GridIdx = FindGridAtPoint(RootLocal);
+    if (GridIdx == INDEX_NONE)
+    {
+        // Fallback: allow dropping on pockets/vest by geometry even if not registered
+        if (RightPanelRef)
+        {
+            const int32 Count = RightPanelRef->GetChildrenCount();
+            for (int32 i = 0; i < Count; ++i)
+            {
+                if (UWidget* Child = RightPanelRef->GetChildAt(i))
+                {
+                    const FName Nm = Child->GetFName();
+                    const bool bIsPocket = (Nm == TEXT("карман1") || Nm == TEXT("карман2") || Nm == TEXT("карман3") || Nm == TEXT("карман4"));
+                    const bool bIsVestGrid = Nm.ToString().StartsWith(TEXT("VestGrid_"));
+                    if ((bIsPocket || bIsVestGrid) &&
+                        Child->GetCachedGeometry().IsUnderLocation(ScreenPos))
+                    {
+                        // Проверка по реальному размеру виджета-ячейки (геометрия)
+                        const FVector2D TargetSize = Child->GetCachedGeometry().GetLocalSize();
+                        auto CanFitWithRotate = [&](bool& bOutRotate) -> bool
+                        {
+                            // Сначала проверяем текущую ориентацию
+                            const int32 CurX = DraggedWidget->bRotated ? DraggedWidget->SizeY : DraggedWidget->SizeX;
+                            const int32 CurY = DraggedWidget->bRotated ? DraggedWidget->SizeX : DraggedWidget->SizeY;
+                            const FVector2D PixCur(60.f * CurX, 60.f * CurY);
+                            if (PixCur.X <= TargetSize.X && PixCur.Y <= TargetSize.Y)
+                            { bOutRotate = false; return true; }
+                            // Затем пробуем повернуть
+                            const int32 RotX = DraggedWidget->bRotated ? DraggedWidget->SizeX : DraggedWidget->SizeY;
+                            const int32 RotY = DraggedWidget->bRotated ? DraggedWidget->SizeY : DraggedWidget->SizeX;
+                            const FVector2D PixRot(60.f * RotX, 60.f * RotY);
+                            if (PixRot.X <= TargetSize.X && PixRot.Y <= TargetSize.Y)
+                            { bOutRotate = true; return true; }
+                            return false;
+                        };
+
+                        bool bRotate = false;
+                        if (!CanFitWithRotate(bRotate))
+                        {
+                            return false; // физически больше слота — отклоняем
+                        }
+
+                        if (APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(GetOwningPlayerPawn()))
+                        {
+                            if (UInventoryComponent* InvComp = PlayerChar->InventoryComponent)
+                            {
+                                if (bIsPocket)
+                                {
+                                    int32 PocketIndex = 1;
+                                    if (Nm == TEXT("карман1")) PocketIndex = 1;
+                                    else if (Nm == TEXT("карман2")) PocketIndex = 2;
+                                    else if (Nm == TEXT("карман3")) PocketIndex = 3;
+                                    else if (Nm == TEXT("карман4")) PocketIndex = 4;
+                                    InvComp->MoveItemToPocket(PocketIndex, DraggedWidget->ItemData);
+                                }
+                                else if (bIsVestGrid)
+                                {
+                                    InvComp->MoveItemToVest(DraggedWidget->ItemData);
+                                }
+
+                                // Reparent visual to target grid
+                                if (UCanvasPanel* TargetGrid = Cast<UCanvasPanel>(Child))
+                                {
+                                    RemoveExistingItemWidget(DraggedWidget->ItemData);
+                                    // Учитываем автоповорот для визуала (вращаем только если нужно)
+                                    if (bRotate)
+                                    {
+                                        DraggedWidget->bRotated = !DraggedWidget->bRotated;
+                                    }
+                                    DraggedWidget->UpdateVisualSize(FVector2D(60.f, 60.f));
+                                    DraggedWidget->RemoveFromParent();
+                                    if (UCanvasPanelSlot* NewSlot = Cast<UCanvasPanelSlot>(TargetGrid->AddChildToCanvas(DraggedWidget)))
+                                    {
+                                        NewSlot->SetAnchors(FAnchors(0.f,0.f,0.f,0.f));
+                                        NewSlot->SetAlignment(FVector2D(0.f,0.f));
+                                        NewSlot->SetPosition(FVector2D::ZeroVector);
+                                        // Размер под итоговую ориентацию
+                                        const int32 vx = DraggedWidget->bRotated ? DraggedWidget->SizeY : DraggedWidget->SizeX;
+                                        const int32 vy = DraggedWidget->bRotated ? DraggedWidget->SizeX : DraggedWidget->SizeY;
+                                        NewSlot->SetSize(FVector2D(60.f * vx, 60.f * vy));
+                                    }
+                                    DraggedWidget->SetTint(FLinearColor(1.f,1.f,1.f,1.f));
+                                }
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
     const FGridArea& A = GridAreas[GridIdx];
     const FVector2D CellSize = FVector2D(A.Size.X / A.CellsX, A.Size.Y / A.CellsY);
 
+    // Позиция курсора относительно выбранной области
+    const FVector2D GridLocal = RootLocal - A.Position;
     int32 CellX = FMath::Clamp((int32)FMath::FloorToInt(GridLocal.X / CellSize.X), 0, A.CellsX - 1);
     int32 CellY = FMath::Clamp((int32)FMath::FloorToInt(GridLocal.Y / CellSize.Y), 0, A.CellsY - 1);
 
@@ -932,17 +1109,74 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
 
     // Определяем зону дропа
     const FGridArea& DropArea = GridAreas[GridIdx];
-    // Если дроп в рюкзак — двигаем внутри канвы и сохраняем позицию. Иначе — только логическая перекладка
+    // Если дроп в рюкзак — репарентим в канву рюкзака, двигаем и сохраняем позицию
     if (DropArea.Name.Contains(TEXT("рюкзак")))
     {
-        if (UCanvasPanelSlot* S = Cast<UCanvasPanelSlot>(DraggedWidget->Slot))
+        // Найти канву рюкзака в корневом канвасе
+        UCanvasPanel* BackpackCanvas = nullptr;
+        const int32 NumChildren = RootCanvas->GetChildrenCount();
+        for (int32 i = 0; i < NumChildren; ++i)
         {
-            S->SetPosition(Snapped);
-            const int32 SX = DraggedWidget->bRotated ? DraggedWidget->SizeY : DraggedWidget->SizeX;
-            const int32 SY = DraggedWidget->bRotated ? DraggedWidget->SizeX : DraggedWidget->SizeY;
-            S->SetSize(FVector2D(60.f * SX, 60.f * SY));
-            UpsertPlacement(DraggedWidget, GridIdx, CellX, CellY);
+            if (UWidget* C = RootCanvas->GetChildAt(i))
+            {
+                if (C->GetFName() == TEXT("BackpackStorageCanvas"))
+                {
+                    BackpackCanvas = Cast<UCanvasPanel>(C);
+                    break;
+                }
+            }
         }
+        if (!BackpackCanvas) return false;
+
+        // Проверка доступности области и автоповорот
+        APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(GetOwningPlayerPawn());
+        UInventoryComponent* InvComp = PlayerChar ? PlayerChar->InventoryComponent : nullptr;
+        UEquippableItemData* EquippedBackpack = InvComp ? InvComp->GetEquippedItem(Backpack) : nullptr;
+        if (!EquippedBackpack) return false;
+
+        auto TryPlace = [&](bool bRotate) -> bool
+        {
+            const int32 SX = bRotate ? DraggedWidget->SizeY : DraggedWidget->SizeX;
+            const int32 SY = bRotate ? DraggedWidget->SizeX : DraggedWidget->SizeY;
+            // Границы по пикселям + контроль пересечений по StoredCellByItem
+            const FVector2D ItemPix(CellSize.X * SX, CellSize.Y * SY);
+            const bool bFitsByPixels = (Snapped.X + ItemPix.X <= A.Size.X && Snapped.Y + ItemPix.Y <= A.Size.Y);
+            if (!bFitsByPixels) return false;
+            if (!IsAreaFreeInBackpack(EquippedBackpack, CellX, CellY, SX, SY, DraggedWidget->ItemData))
+            {
+                return false;
+            }
+            // Визуально
+            DraggedWidget->bRotated = bRotate;
+            DraggedWidget->UpdateVisualSize(FVector2D(60.f, 60.f));
+            RemoveExistingItemWidget(DraggedWidget->ItemData);
+            DraggedWidget->RemoveFromParent();
+            if (UCanvasPanelSlot* NewSlot = Cast<UCanvasPanelSlot>(BackpackCanvas->AddChildToCanvas(DraggedWidget)))
+            {
+                NewSlot->SetAnchors(FAnchors(0.f,0.f,0.f,0.f));
+                NewSlot->SetAlignment(FVector2D(0.f,0.f));
+                NewSlot->SetPosition(Snapped);
+                NewSlot->SetSize(FVector2D(CellSize.X * SX, CellSize.Y * SY));
+                UpsertPlacement(DraggedWidget, GridIdx, CellX, CellY);
+            }
+            // Логика
+            InvComp->RemoveFromAnyStorage(DraggedWidget->ItemData);
+            InvComp->AddToEquipmentStorage(EquippedBackpack, DraggedWidget->ItemData);
+            EquippedBackpack->StoredCellByItem.Add(DraggedWidget->ItemData, FIntPoint(CellX, CellY));
+            EquippedBackpack->PersistentCellByItem.Add(DraggedWidget->ItemData, FIntPoint(CellX, CellY));
+            return true;
+        };
+
+        // Сначала как есть, потом автоповорот
+        if (!TryPlace(DraggedWidget->bRotated))
+        {
+            if (!TryPlace(!DraggedWidget->bRotated))
+            {
+                return false;
+            }
+        }
+        // Сбрасываем подсветку после успешного дропа
+        DraggedWidget->SetTint(FLinearColor(1.f, 1.f, 1.f, 1.f));
     }
     
     if (APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(GetOwningPlayerPawn()))
@@ -953,8 +1187,8 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
             {
                 if (UEquippableItemData* EquippedBackpack = InvComp->GetEquippedItem(Backpack))
                 {
-                    InvComp->RemoveSpecificFromBackpack(DraggedWidget->ItemData);
-                    InvComp->RemoveFromEquipmentStorage(EquippedBackpack, DraggedWidget->ItemData);
+                    // Удаляем из любых мест, затем добавляем в хранилище рюкзака
+                    InvComp->RemoveFromAnyStorage(DraggedWidget->ItemData);
                     InvComp->AddToEquipmentStorage(EquippedBackpack, DraggedWidget->ItemData);
                     EquippedBackpack->StoredCellByItem.Add(DraggedWidget->ItemData, FIntPoint(CellX, CellY));
                     EquippedBackpack->PersistentCellByItem.Add(DraggedWidget->ItemData, FIntPoint(CellX, CellY));
@@ -962,6 +1196,26 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
             }
             else if (DropArea.Name.StartsWith(TEXT("жилет")))
             {
+                // Валидируем размер и выполняем автоповорот при необходимости
+                int32 FitX = DraggedWidget->bRotated ? DraggedWidget->SizeY : DraggedWidget->SizeX;
+                int32 FitY = DraggedWidget->bRotated ? DraggedWidget->SizeX : DraggedWidget->SizeY;
+                bool bFits = (FitX <= A.CellsX && FitY <= A.CellsY);
+                if (!bFits)
+                {
+                    // Пробуем автоповорот
+                    int32 RotX = DraggedWidget->SizeY;
+                    int32 RotY = DraggedWidget->SizeX;
+                    if (RotX <= A.CellsX && RotY <= A.CellsY)
+                    {
+                        DraggedWidget->bRotated = !DraggedWidget->bRotated;
+                        DraggedWidget->UpdateVisualSize(FVector2D(60.f, 60.f));
+                        bFits = true;
+                    }
+                }
+                if (!bFits)
+                {
+                    return false; // не влезает в грид жилета
+                }
                 InvComp->MoveItemToVest(DraggedWidget->ItemData);
                 UpdateVestGrid();
             }
@@ -972,8 +1226,62 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
                 else if (DropArea.Name == TEXT("карман2")) PocketIndex = 2;
                 else if (DropArea.Name == TEXT("карман3")) PocketIndex = 3;
                 else if (DropArea.Name == TEXT("карман4")) PocketIndex = 4;
+
+                // Проверка на размер 1x1 и автоповорот для укладки в 1x1
+                int32 FitX = DraggedWidget->bRotated ? DraggedWidget->SizeY : DraggedWidget->SizeX;
+                int32 FitY = DraggedWidget->bRotated ? DraggedWidget->SizeX : DraggedWidget->SizeY;
+                bool bFits = (FitX <= 1 && FitY <= 1);
+                if (!bFits)
+                {
+                    // Пробуем автоповорот для 1x2 или 2x1
+                    const bool bCanRotateToFit = (DraggedWidget->SizeY <= 1 && DraggedWidget->SizeX <= 1);
+                    if (bCanRotateToFit)
+                    {
+                        DraggedWidget->bRotated = !DraggedWidget->bRotated;
+                        DraggedWidget->UpdateVisualSize(FVector2D(60.f, 60.f));
+                        bFits = true;
+                    }
+                }
+                if (!bFits)
+                {
+                    return false; // предмет больше 1x1 — не кладём в карман
+                }
+
+                // Логика хранения
                 InvComp->MoveItemToPocket(PocketIndex, DraggedWidget->ItemData);
-                RefreshInventoryUI();
+
+                    // Визуально: репарентим виджет в соответствующий карман без полного RefreshInventoryUI
+                if (RightPanelRef)
+                {
+                    const FString PocketName = FString::Printf(TEXT("карман%d"), PocketIndex);
+                    UCanvasPanel* TargetPocket = nullptr;
+                    const int32 Count = RightPanelRef->GetChildrenCount();
+                    for (int32 i = 0; i < Count; ++i)
+                    {
+                        if (UWidget* Child = RightPanelRef->GetChildAt(i))
+                        {
+                            if (Child->GetFName() == FName(*PocketName))
+                            {
+                                TargetPocket = Cast<UCanvasPanel>(Child);
+                                break;
+                            }
+                        }
+                    }
+                    if (TargetPocket)
+                    {
+                        // Удаляем прежний виджет из любого контейнера, затем добавляем в карман
+                        DraggedWidget->RemoveFromParent();
+                        if (UCanvasPanelSlot* NewSlot = Cast<UCanvasPanelSlot>(TargetPocket->AddChildToCanvas(DraggedWidget)))
+                        {
+                            NewSlot->SetAnchors(FAnchors(0.f,0.f,0.f,0.f));
+                            NewSlot->SetAlignment(FVector2D(0.f,0.f));
+                            NewSlot->SetPosition(FVector2D::ZeroVector);
+                            NewSlot->SetSize(FVector2D(60.f, 60.f));
+                        }
+                        // Сбрасываем подсветку после успешного дропа
+                        DraggedWidget->SetTint(FLinearColor(1.f, 1.f, 1.f, 1.f));
+                    }
+                }
             }
         }
     }
@@ -982,10 +1290,33 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
     
 bool UInventoryWidget::NativeOnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
 {
-    const FVector2D Local = InGeometry.AbsoluteToLocal(InDragDropEvent.GetScreenSpacePosition());
-    const int32 GridIdx = FindGridAtPoint(Local);
-    return GridIdx != INDEX_NONE;
-}
+    // Координаты курсора переводим в систему корневого канваса, т.к. GridAreas зарегистрированы в ней
+    UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(WidgetTree ? WidgetTree->RootWidget : nullptr);
+    if (!RootCanvas) return false;
+    const FVector2D RootLocal = RootCanvas->GetCachedGeometry().AbsoluteToLocal(InDragDropEvent.GetScreenSpacePosition());
+    const int32 GridIdx = FindGridAtPoint(RootLocal);
+    if (GridIdx != INDEX_NONE) return true;
+    // Фолбэк: если зона не найдена среди зарегистрированных — принимаем, если курсор над карманом/жилетом визуально
+    if (RightPanelRef)
+    {
+        const int32 Count = RightPanelRef->GetChildrenCount();
+        for (int32 i = 0; i < Count; ++i)
+        {
+            if (UWidget* Child = RightPanelRef->GetChildAt(i))
+            {
+                const FName Nm = Child->GetFName();
+                const bool bIsPocket = (Nm == TEXT("карман1") || Nm == TEXT("карман2") || Nm == TEXT("карман3") || Nm == TEXT("карман4"));
+                const bool bIsVestGrid = Nm.ToString().StartsWith(TEXT("VestGrid_"));
+                if ((bIsPocket || bIsVestGrid) &&
+                    Child->GetCachedGeometry().IsUnderLocation(InDragDropEvent.GetScreenSpacePosition()))
+                {
+                    return true;
+                }
+            }
+        }
+    }
+                    return false;
+                }
 
 FReply UInventoryWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
 {
@@ -1294,7 +1625,8 @@ void UInventoryWidget::CreateVestGrid()
             UBorder* GridBackground = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
             if (GridBackground)
             {
-                GridBackground->SetBrushColor(FLinearColor(0.2f, 0.8f, 0.2f, 0.3f)); // Зеленый фон для видимости
+                // Единый стиль как у пояса
+                GridBackground->SetBrushColor(FLinearColor(1.f,1.f,1.f,0.05f));
                 UCanvasPanelSlot* BgSlot = Grid->AddChildToCanvas(GridBackground);
                 if (BgSlot)
                 {
@@ -1319,7 +1651,8 @@ void UInventoryWidget::CreateVestGrid()
                         UBorder* CellBackground = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), CellBgName);
                         if (CellBackground)
                         {
-                            CellBackground->SetBrushColor(FLinearColor(0.0f, 0.0f, 1.0f, 0.2f)); // Синий фон
+                            // Унифицированный стиль как у пояса/рюкзака/карманов
+                            CellBackground->SetBrushColor(FLinearColor(1.f,1.f,1.f,0.05f));
                             UCanvasPanelSlot* BgSlot = CellContainer->AddChildToCanvas(CellBackground);
                             if (BgSlot)
                             {
@@ -1349,9 +1682,8 @@ void UInventoryWidget::CreateVestGrid()
     };
     
     // Создаем 6 отдельных гридов жилета горизонтально в одну линию
-    // Все гриды на одной высоте Y=200.f, но с разными X позициями
-    // Располагаем сразу над поясом (TopOffset пояса: 280, высота жилета до 120) -> выберем 220
-    const float VestY = 220.f;
+    // Поднимаем грид жилета на 200px (было ~220)
+    const float VestY = 20.f;
     // Размещаем внутри координат RightPanel (0..RightPanel.Width). Начнём от 70 как у других гридов
     const float VestXStart = 70.f;
     const float Step = 70.f;        // шаг между секциями (60 + 10)
