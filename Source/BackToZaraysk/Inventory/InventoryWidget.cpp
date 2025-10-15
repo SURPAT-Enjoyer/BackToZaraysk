@@ -555,6 +555,77 @@ void UInventoryWidget::UpdateEquipmentSlots()
     }
 }
 
+void UInventoryWidget::UpdatePocketsGrid()
+{
+    if (!RightPanelRef) return;
+
+    // Получаем компонент инвентаря
+    APlayerController* PC = GetOwningPlayer();
+    if (!PC) return;
+    
+    APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(PC->GetPawn());
+    if (!PlayerChar || !PlayerChar->InventoryComponent) return;
+    
+    UInventoryComponent* InvComp = PlayerChar->InventoryComponent;
+    
+    // Обновляем каждый карман
+    const TArray<TArray<TObjectPtr<UInventoryItemData>>*> PocketArrays = {
+        &InvComp->Pocket1Items,
+        &InvComp->Pocket2Items, 
+        &InvComp->Pocket3Items,
+        &InvComp->Pocket4Items
+    };
+    
+    for (int32 PocketIndex = 0; PocketIndex < 4; ++PocketIndex)
+    {
+        FString PocketName = FString::Printf(TEXT("карман%d"), PocketIndex + 1);
+        
+        // Находим грид кармана
+        UCanvasPanel* PocketGrid = nullptr;
+        TArray<UWidget*> Children = RightPanelRef->GetAllChildren();
+        for (UWidget* Child : Children)
+        {
+            if (Child && Child->GetFName() == FName(*PocketName))
+            {
+                PocketGrid = Cast<UCanvasPanel>(Child);
+                break;
+            }
+        }
+        
+        if (!PocketGrid) continue;
+        
+        // Очищаем существующие виджеты предметов
+        TArray<UWidget*> GridChildren = PocketGrid->GetAllChildren();
+        for (UWidget* Child : GridChildren)
+        {
+            if (Child && Child->IsA<UInventoryItemWidget>())
+            {
+                PocketGrid->RemoveChild(Child);
+            }
+        }
+        
+        // Добавляем предметы из кармана
+        const TArray<TObjectPtr<UInventoryItemData>>& PocketItems = *PocketArrays[PocketIndex];
+        for (UInventoryItemData* Item : PocketItems)
+        {
+            if (!Item) continue;
+            
+            UInventoryItemWidget* ItemWidget = WidgetTree->ConstructWidget<UInventoryItemWidget>(UInventoryItemWidget::StaticClass());
+            ItemWidget->Init(Item, Item->Icon, FVector2D(60.f, 60.f));
+            ItemWidget->SetVisibility(ESlateVisibility::Visible);
+            ItemWidget->SetIsEnabled(true);
+            
+            if (UCanvasPanelSlot* ItemSlot = Cast<UCanvasPanelSlot>(PocketGrid->AddChildToCanvas(ItemWidget)))
+            {
+                ItemSlot->SetAnchors(FAnchors(0.f, 0.f, 0.f, 0.f));
+                ItemSlot->SetAlignment(FVector2D(0.f, 0.f));
+                ItemSlot->SetPosition(FVector2D::ZeroVector);
+                ItemSlot->SetSize(FVector2D(60.f, 60.f));
+            }
+        }
+    }
+}
+
 void UInventoryWidget::UpdateBackpackStorageGrid()
 {
     // Работать будем относительно корневого Canvas, чтобы координаты совпадали с hit-test
@@ -720,6 +791,8 @@ void UInventoryWidget::RefreshInventoryUI()
             UpdateEquipmentSlots();
             // Обновляем грид жилета, если он экипирован
             UpdateVestGrid();
+            // Обновляем карманы
+            UpdatePocketsGrid();
             UpdateBackpackStorageGrid();
             SyncBackpack(InvComp->BackpackItems);
         }

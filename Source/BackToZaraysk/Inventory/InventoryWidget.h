@@ -184,6 +184,9 @@ public:
     void SetHoveredItem(class UInventoryItemWidget* Item) { HoverItem = Item; }
     void ClearHoveredItem(class UInventoryItemWidget* Item) { if (HoverItem == Item) HoverItem = nullptr; }
 
+    // Обновление отображения грида карманов
+    void UpdatePocketsGrid();
+    
     // Обновление отображения грида хранилища рюкзака
     void UpdateBackpackStorageGrid();
 };
