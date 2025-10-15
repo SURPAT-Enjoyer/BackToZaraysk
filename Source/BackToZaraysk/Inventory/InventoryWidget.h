@@ -184,6 +184,20 @@ public:
     void SetHoveredItem(class UInventoryItemWidget* Item) { HoverItem = Item; }
     void ClearHoveredItem(class UInventoryItemWidget* Item) { if (HoverItem == Item) HoverItem = nullptr; }
 
+    // Обновление отображения грида карманов
+    void UpdatePocketsGrid();
+    
     // Обновление отображения грида хранилища рюкзака
     void UpdateBackpackStorageGrid();
+
+    // Проверка свободной области для размещения предмета в гриде рюкзака
+    bool IsAreaFreeInBackpack(const class UEquippableItemData* BackpackData,
+                              int32 StartCellX,
+                              int32 StartCellY,
+                              int32 SizeX,
+                              int32 SizeY,
+                              const class UInventoryItemData* IgnoredItem) const;
+
+    // Удаляет ранее созданный виджет данного ItemData из любых контейнеров UI
+    void RemoveExistingItemWidget(class UInventoryItemData* ItemData);
 };

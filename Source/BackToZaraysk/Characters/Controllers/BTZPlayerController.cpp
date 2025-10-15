@@ -353,26 +353,24 @@ void ABTZPlayerController::Interact()
                     }
                 }
 
-                // Иначе кладём в рюкзак как ранее (гарантия для 1x1 и любых обычных предметов)
-                // Если это мелкий (1x1) предмет — сразу в обычный рюкзак как в список, чтобы не «исчезал»
+                // Иначе кладём согласно новой приоритетной логике (карманы → рюкзак → жилет)
+                // Если это мелкий (1x1) предмет — используем TryPickupItem (оно само разложит по приоритету)
                 if (Data && Data->SizeInCellsX == 1 && Data->SizeInCellsY == 1)
                 {
-                    if (Inv->AddToBackpack(Data))
+                    if (Inv->TryPickupItem(Data))
                     {
                         Pickup->Destroy();
                         if (InventoryWidgetInstance) { InventoryWidgetInstance->RefreshInventoryUI(); }
                         return;
                     }
+                    // Если не поместился — не подбираем (никаких fallback в общий список)
                 }
-                // Общая попытка положить в рюкзак
-                if (Inv->AddToBackpack(Data))
+                // Для прочих предметов — та же приоритетная логика через TryPickupItem
+                if (Inv->TryPickupItem(Data))
                 {
                     Pickup->Destroy();
-                    if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Green, TEXT("Picked up to backpack"));
-                    if (InventoryWidgetInstance)
-                    {
-                        InventoryWidgetInstance->AddBackpackItemIcon(Data);
-                    }
+                    if (InventoryWidgetInstance) { InventoryWidgetInstance->RefreshInventoryUI(); }
+                    return;
                 }
             }
         }

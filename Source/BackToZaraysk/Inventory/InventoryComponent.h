@@ -86,9 +86,6 @@ public:
     UFUNCTION(BlueprintCallable, Category="Inventory")
     bool TryPickupItem(UInventoryItemData* Item);
 
-private:
-    // Простейшие хранилища пояса и карманов (гриды фиксированного размера)
-    FIntPoint BeltGridSize = FIntPoint(8, 2);
     // Переходим к четырём карманам 1x1
     TArray<TObjectPtr<UInventoryItemData>> BeltStorageItems; // 8x2 как раньше
     TArray<TObjectPtr<UInventoryItemData>> Pocket1Items; // 1x1

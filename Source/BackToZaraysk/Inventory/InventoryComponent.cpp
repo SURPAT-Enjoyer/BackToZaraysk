@@ -1,6 +1,7 @@
 #include "InventoryComponent.h"
 #include "EquippableItemData.h"
 #include "BackToZaraysk/Components/EquipmentComponent.h"
+#include "BackToZaraysk/GameData/Items/Test/PickupBase.h"
 #include "GameFramework/Character.h"
 
 UInventoryComponent::UInventoryComponent()
@@ -224,6 +225,15 @@ bool UInventoryComponent::UnequipItemToInventory(EEquipmentSlotType SlotType, bo
         }
     }
 
+    // Если снимаем жилет и рюкзак не экипирован, то всегда выбрасываем в мир
+    if (SlotType == Vest && !bDropToWorld)
+    {
+        if (GetEquippedItem(Backpack) == nullptr)
+        {
+            bDropToWorld = true;
+        }
+    }
+
     // Снимаем предмет
     if (EquipComp->UnequipItem(SlotType, bDropToWorld))
 	{
@@ -244,11 +254,41 @@ bool UInventoryComponent::UnequipItemToInventory(EEquipmentSlotType SlotType, bo
             EquipmentStorage.Remove(Item);
         }
 
-		// Если не выбрасываем в мир, восстанавливаем предмет на исходной позиции
-		if (!bDropToWorld)
+        // Если не выбрасываем в мир, восстанавливаем предмет в инвентарь
+        if (!bDropToWorld)
 		{
 			RestoreItemToPosition(Item);
 		}
+        else
+        {
+            // Спавним Pickup для тех слотов, где визуальный компонент не делает этого сам (например, жилет)
+            if (SlotType == Vest)
+            {
+            ACharacter* OwnerChar = Cast<ACharacter>(GetOwner());
+            if (OwnerChar)
+            {
+                if (UWorld* World = OwnerChar->GetWorld())
+                {
+                    FVector ViewLoc; FRotator ViewRot; OwnerChar->GetActorEyesViewPoint(ViewLoc, ViewRot);
+                    const FVector SpawnLoc = ViewLoc + ViewRot.Vector() * 80.f;
+                    FActorSpawnParameters S; S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+                    extern TSubclassOf<AActor> GetPickupClassForItem_Internal(const UInventoryItemData* ItemData);
+                    TSubclassOf<AActor> DropClass = GetPickupClassForItem_Internal(Item);
+                    if (DropClass)
+                    {
+                        if (AActor* SpawnedActor = World->SpawnActor<AActor>(DropClass, SpawnLoc, ViewRot, S))
+                        {
+                            if (APickupBase* Spawned = Cast<APickupBase>(SpawnedActor))
+                            {
+                                Spawned->ItemInstance = Item;
+                                Spawned->ApplyItemInstanceVisuals();
+                            }
+                        }
+                    }
+                }
+            }
+            }
+        }
 		
 		if (GEngine)
 		{
@@ -620,7 +660,7 @@ bool UInventoryComponent::TryPickupItem(UInventoryItemData* Item)
         return false;
     }
 
-    // Стандартизируем размеры минимум 1x1, чтобы 1x1 кубы не исчезали из-за нулевых значений
+    // Стандартизируем размеры минимум 1x1
     Item->SizeInCellsX = FMath::Max(1, Item->SizeInCellsX);
     Item->SizeInCellsY = FMath::Max(1, Item->SizeInCellsY);
 
@@ -629,7 +669,6 @@ bool UInventoryComponent::TryPickupItem(UInventoryItemData* Item)
     {
         if (!EquipmentSlots.Contains(Eq->EquipmentSlot))
         {
-            // Добавим во временный инвентарь, чтобы использовать существующую логику
             BackpackItems.Add(Item);
             const bool bEquipped = EquipItemFromInventory(Eq);
             if (!bEquipped)
@@ -638,11 +677,9 @@ bool UInventoryComponent::TryPickupItem(UInventoryItemData* Item)
             }
             return bEquipped;
         }
-        // Если слот занят — идем по приоритету гридов ниже
     }
 
-    // 2) Если предмет нельзя экипировать или слот занят — кладём в рюкзак, затем жилет, затем пояс, затем карманы
-    // Рюкзак как обычный список (здесь без ширины/высоты) — проверим площадь доп.хранилища рюкзака, если он экипирован и имеет хранилище
+    // 2) Если экипирован рюкзак — пробуем доп. хранилище экипированного рюкзака
     if (UEquippableItemData* EquippedBackpack = GetEquippedItem(Backpack))
     {
         if (EquippedBackpack->bHasAdditionalStorage)
@@ -654,7 +691,17 @@ bool UInventoryComponent::TryPickupItem(UInventoryItemData* Item)
         }
     }
 
-    // Жилет как хранилище (если есть)
+    // 3) Если в рюкзаке нет места или он не экипирован — пробуем карманы (по одному 1x1)
+    const FIntPoint OneCell(1,1);
+    if (Item->SizeInCellsX == 1 && Item->SizeInCellsY == 1)
+    {
+        if (AddToGridLike(Pocket1Items, OneCell, Item)) return true;
+        if (AddToGridLike(Pocket2Items, OneCell, Item)) return true;
+        if (AddToGridLike(Pocket3Items, OneCell, Item)) return true;
+        if (AddToGridLike(Pocket4Items, OneCell, Item)) return true;
+    }
+
+    // 4) Если в карманах нет места — пробуем жилет
     if (UEquippableItemData* EquippedVest = GetEquippedItem(Vest))
     {
         if (EquippedVest->bHasAdditionalStorage)
@@ -666,21 +713,8 @@ bool UInventoryComponent::TryPickupItem(UInventoryItemData* Item)
         }
     }
 
-    // Пояс
-    if (AddToGridLike(BeltStorageItems, BeltGridSize, Item))
-    {
-        return true;
-    }
-
-    // Карманы: 4 отдельных кармана 1x1
-    const FIntPoint OneCell(1,1);
-    if (AddToGridLike(Pocket1Items, OneCell, Item)) return true;
-    if (AddToGridLike(Pocket2Items, OneCell, Item)) return true;
-    if (AddToGridLike(Pocket3Items, OneCell, Item)) return true;
-    if (AddToGridLike(Pocket4Items, OneCell, Item)) return true;
-
-    // Не хватает места нигде — не подбираем
-    if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Yellow, TEXT("⚠️ TryPickupItem: No space in any storage"));
+    // Иначе — не подбираем
+    if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Yellow, TEXT("⚠️ TryPickupItem: No space in pockets/backpack/vest"));
     return false;
 }
 
@@ -714,10 +748,18 @@ bool UInventoryComponent::MoveItemToPocket(int32 PocketIndex, UInventoryItemData
         case 4: Target = &Pocket4Items; break;
         default: return false;
     }
-    // Удалим из прочих хранилищ
+    
+    // Удаляем из всех других карманов
+    Pocket1Items.Remove(Item);
+    Pocket2Items.Remove(Item);
+    Pocket3Items.Remove(Item);
+    Pocket4Items.Remove(Item);
+    
+    // Удаляем из других хранилищ
     RemoveSpecificFromBackpack(Item);
-    if (UEquippableItemData* EquippedVest = GetEquippedItem(Vest)) { RemoveFromEquipmentStorage(EquippedVest, Item); }
-    if (UEquippableItemData* EquippedBackpack = GetEquippedItem(Backpack)) { RemoveFromEquipmentStorage(EquippedBackpack, Item); }
+    if (UEquippableItemData* EquippedVest = GetEquippedItem(Vest)) { RemoveCompletelyFromEquipmentStorage(EquippedVest, Item); }
+    if (UEquippableItemData* EquippedBackpack = GetEquippedItem(Backpack)) { RemoveCompletelyFromEquipmentStorage(EquippedBackpack, Item); }
+    
     return AddToGridLike(*Target, FIntPoint(1,1), Item);
 }
 
