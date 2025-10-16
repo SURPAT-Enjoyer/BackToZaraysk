@@ -55,6 +55,13 @@ public:
     // Персистентная копия позиций для переживания выброса/подбора
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment|Storage")
     TMap<TObjectPtr<class UInventoryItemData>, FIntPoint> PersistentCellByItem;
+
+    // Для многосекционных гридов (например, жилет из 6 мини‑гридов): в каком гриде лежит предмет
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment|Storage")
+    TMap<TObjectPtr<class UInventoryItemData>, int32> StoredGridByItem;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment|Storage")
+    TMap<TObjectPtr<class UInventoryItemData>, int32> PersistentGridByItem;
 };
 
 /**

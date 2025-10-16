@@ -76,6 +76,9 @@ public:
 	void OnUnequipped();
 	virtual void OnUnequipped_Implementation();
 
+	// Применяем визуал из ItemInstance (меши/видимость)
+	virtual void ApplyItemInstanceVisuals() override;
+
 protected:
 	virtual void BeginPlay() override;
 };

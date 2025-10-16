@@ -2,6 +2,7 @@
 
 #include "EquipmentBase.h"
 #include "Components/StaticMeshComponent.h"
+#include "BackToZaraysk/Inventory/EquippableItemData.h"
 #include "GameFramework/Character.h"
 #include "Components/SkeletalMeshComponent.h"
 
@@ -26,6 +27,44 @@ void AEquipmentBase::BeginPlay()
 		Mesh->SetSimulatePhysics(bEnablePhysics);
 		Mesh->SetEnableGravity(true);
 	}
+}
+
+void AEquipmentBase::ApplyItemInstanceVisuals()
+{
+    // Настраиваем вид из ItemInstance: если это UEquippableItemData с SkeletalMesh/StaticMesh
+    if (!ItemInstance)
+    {
+        return;
+    }
+    UEquippableItemData* EqData = Cast<UEquippableItemData>(ItemInstance);
+    if (!EqData)
+    {
+        return;
+    }
+    // Если задан скелетный меш в данных — отобразим SkeletalMesh
+    USkeletalMesh* AsSkeletal = Cast<USkeletalMesh>(EqData->EquippedMesh);
+    UStaticMesh* AsStatic = Cast<UStaticMesh>(EqData->EquippedMesh);
+    if (AsSkeletal && SkeletalMesh)
+    {
+        SkeletalMesh->SetSkeletalMesh(AsSkeletal);
+        SkeletalMesh->SetVisibility(true, true);
+        SkeletalMesh->SetHiddenInGame(false, true);
+        if (Mesh)
+        {
+            Mesh->SetVisibility(false, true);
+            Mesh->SetHiddenInGame(true, true);
+            Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        }
+        return;
+    }
+    if (AsStatic && Mesh)
+    {
+        Mesh->SetStaticMesh(AsStatic);
+        Mesh->SetVisibility(true, true);
+        Mesh->SetHiddenInGame(false, true);
+        SkeletalMesh->SetVisibility(false, true);
+        SkeletalMesh->SetHiddenInGame(true, true);
+    }
 }
 
 bool AEquipmentBase::Equip(ACharacter* Character)
@@ -132,11 +171,10 @@ bool AEquipmentBase::Unequip(bool bDropToWorld)
 		// Включаем физику для падения в мир
 		SetPhysicsEnabled(true);
 
-		// Добавляем небольшой импульс вперед от персонажа
+		// Убираем сильный импульс вперёд, даём лёгкий подъём, чтобы не проваливался/не улетал
 		if (OwnerCharacter && Mesh)
 		{
-			FVector DropDirection = OwnerCharacter->GetActorForwardVector();
-			Mesh->AddImpulse(DropDirection * 200.0f + FVector(0, 0, 100.0f), NAME_None, true);
+			Mesh->AddImpulse(FVector(0.f, 0.f, 150.0f), NAME_None, true);
 		}
 	}
 	else

@@ -2,7 +2,9 @@
 #include "EquippableItemData.h"
 #include "BackToZaraysk/Components/EquipmentComponent.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupBase.h"
+#include "BackToZaraysk/GameData/Items/EquipmentBase.h"
 #include "GameFramework/Character.h"
+#include "DrawDebugHelpers.h"
 
 UInventoryComponent::UInventoryComponent()
 {
@@ -203,22 +205,21 @@ bool UInventoryComponent::UnequipItemToInventory(EEquipmentSlotType SlotType, bo
 		return false;
 	}
 
-    // Перед снятием: если это рюкзак, и мы выбрасываем в мир — переносим его содержимое в PersistentStorage
-    if (SlotType == Backpack && bDropToWorld)
+    // Перед снятием: если это рюкзак или жилет, и мы выбрасываем в мир — переносим содержимое в PersistentStorage
+    if ((SlotType == Backpack || SlotType == Vest) && bDropToWorld)
     {
-        if (UEquippableItemData* BackpackItem = Item)
+        if (UEquippableItemData* EquipItem = Item)
         {
             // Прокопируем текущее EquipmentStorage в PersistentStorage
-            if (TArray<TObjectPtr<UInventoryItemData>>* StorageItems = EquipmentStorage.Find(BackpackItem))
+            if (TArray<TObjectPtr<UInventoryItemData>>* StorageItems = EquipmentStorage.Find(EquipItem))
             {
-                BackpackItem->PersistentStorage = *StorageItems;
-                // Копируем позиции ячеек для каждой ссылки на предмет, если они были сохранены в runtime-структуре
-                // StoredCellByItem могла быть заполнена в UI. Перенесём её в PersistentCellByItem перед выбросом.
+                EquipItem->PersistentStorage = *StorageItems;
+                // Копируем позиции ячеек из runtime-структуры в персистентную карту
                 for (const TObjectPtr<UInventoryItemData>& It : *StorageItems)
                 {
-                    if (It && BackpackItem->StoredCellByItem.Contains(It))
+                    if (It && EquipItem->StoredCellByItem.Contains(It))
                     {
-                        BackpackItem->PersistentCellByItem.Add(It, BackpackItem->StoredCellByItem[It]);
+                        EquipItem->PersistentCellByItem.Add(It, EquipItem->StoredCellByItem[It]);
                     }
                 }
             }
@@ -247,46 +248,125 @@ bool UInventoryComponent::UnequipItemToInventory(EEquipmentSlotType SlotType, bo
 		// Удаляем из слота
 		EquipmentSlots.Remove(SlotType);
 		
-        // Если не выбрасываем в мир, восстанавливаем предмет на исходной позиции
-        // Если выбросили рюкзак — очищаем оперативное хранилище, но оставляем PersistentStorage внутри ItemData
-        if (SlotType == Backpack && bDropToWorld)
+        // Если выбросили рюкзак/жилет — очищаем оперативное хранилище, но оставляем PersistentStorage внутри ItemData
+        if ((SlotType == Backpack || SlotType == Vest) && bDropToWorld)
         {
             EquipmentStorage.Remove(Item);
         }
 
-        // Если не выбрасываем в мир, восстанавливаем предмет в инвентарь
+        // Если не выбрасываем в мир
         if (!bDropToWorld)
-		{
-			RestoreItemToPosition(Item);
-		}
+        {
+            // Особый случай: снимаем жилет — если надет рюкзак с хранилищем, кладём жилет туда, чтобы он был виден в UI
+            if (SlotType == Vest)
+            {
+                if (UEquippableItemData* EquippedBackpack = GetEquippedItem(Backpack))
+                {
+                    if (EquippedBackpack->bHasAdditionalStorage)
+                    {
+                        if (AddToEquipmentStorage(EquippedBackpack, Item))
+                        {
+                            // Успешно поместили в хранилище рюкзака — выходим
+                            return true;
+                        }
+                    }
+                }
+            }
+            // Иначе — возвращаем в список инвентаря (общий бэкпак‑лист)
+            RestoreItemToPosition(Item);
+        }
         else
         {
             // Спавним Pickup для тех слотов, где визуальный компонент не делает этого сам (например, жилет)
             if (SlotType == Vest)
             {
-            ACharacter* OwnerChar = Cast<ACharacter>(GetOwner());
-            if (OwnerChar)
-            {
-                if (UWorld* World = OwnerChar->GetWorld())
+                ACharacter* OwnerChar = Cast<ACharacter>(GetOwner());
+                if (OwnerChar)
                 {
-                    FVector ViewLoc; FRotator ViewRot; OwnerChar->GetActorEyesViewPoint(ViewLoc, ViewRot);
-                    const FVector SpawnLoc = ViewLoc + ViewRot.Vector() * 80.f;
-                    FActorSpawnParameters S; S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
-                    extern TSubclassOf<AActor> GetPickupClassForItem_Internal(const UInventoryItemData* ItemData);
-                    TSubclassOf<AActor> DropClass = GetPickupClassForItem_Internal(Item);
-                    if (DropClass)
+                    if (UWorld* World = OwnerChar->GetWorld())
                     {
-                        if (AActor* SpawnedActor = World->SpawnActor<AActor>(DropClass, SpawnLoc, ViewRot, S))
+                        FVector ViewLoc; FRotator ViewRot; OwnerChar->GetActorEyesViewPoint(ViewLoc, ViewRot);
+                        const FVector SpawnLoc = ViewLoc + ViewRot.Vector() * 80.f + FVector(0.f, 0.f, 100.f);
+                        if (GEngine)
                         {
-                            if (APickupBase* Spawned = Cast<APickupBase>(SpawnedActor))
+                            GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Yellow,
+                                FString::Printf(TEXT("🧪 Drop Vest: Preparing spawn at (%.0f, %.0f, %.0f)"), SpawnLoc.X, SpawnLoc.Y, SpawnLoc.Z));
+                        }
+                        FActorSpawnParameters S; S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+                        extern TSubclassOf<AActor> GetPickupClassForItem_Internal(const UInventoryItemData* ItemData);
+                        TSubclassOf<AActor> DropClass = GetPickupClassForItem_Internal(Item);
+                        if (GEngine)
+                        {
+                            GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Cyan,
+                                FString::Printf(TEXT("🧪 Drop Vest: Class to spawn = %s"), *GetNameSafe(DropClass))); 
+                        }
+                        if (DropClass)
+                        {
+                            if (AActor* SpawnedActor = World->SpawnActor<AActor>(DropClass, SpawnLoc, ViewRot, S))
                             {
-                                Spawned->ItemInstance = Item;
-                                Spawned->ApplyItemInstanceVisuals();
+                                if (GEngine)
+                                {
+                                    GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Green,
+                                        FString::Printf(TEXT("✅ Drop Vest: Spawned %s at (%.0f, %.0f, %.0f)"), *SpawnedActor->GetName(), SpawnLoc.X, SpawnLoc.Y, SpawnLoc.Z));
+                                }
+                                if (APickupBase* Spawned = Cast<APickupBase>(SpawnedActor))
+                                {
+                                    Spawned->ItemInstance = Item;
+                                    Spawned->ApplyItemInstanceVisuals();
+                                    if (GEngine)
+                                    {
+                                        GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Green, TEXT("✅ Drop Vest: ItemInstance applied to spawned actor"));
+                                    }
+                                }
+                                // Диагностика видимости/коллизии
+                                const bool bHidden = SpawnedActor->IsHidden();
+                                bool bAnyVisible = !bHidden;
+                                if (AEquipmentBase* Eq = Cast<AEquipmentBase>(SpawnedActor))
+                                {
+                                    const bool bSkVisible = (Eq->SkeletalMesh && Eq->SkeletalMesh->IsVisible());
+                                    const bool bStVisible = (Eq->Mesh && Eq->Mesh->IsVisible());
+                                    bAnyVisible = bAnyVisible || bSkVisible || bStVisible;
+                                    // Гарантируем видимость
+                                    SpawnedActor->SetActorHiddenInGame(false);
+                                    if (Eq->SkeletalMesh) { Eq->SkeletalMesh->SetVisibility(true, true); Eq->SkeletalMesh->SetHiddenInGame(false, true); }
+                                    if (Eq->Mesh) { Eq->Mesh->SetVisibility(true, true); Eq->Mesh->SetHiddenInGame(false, true); }
+                                    // Выводим фактическую позицию меша
+                                    const FVector SkLoc = Eq->SkeletalMesh ? Eq->SkeletalMesh->GetComponentLocation() : FVector::ZeroVector;
+                                    const FVector StLoc = Eq->Mesh ? Eq->Mesh->GetComponentLocation() : FVector::ZeroVector;
+                                    if (GEngine)
+                                    {
+                                        GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Cyan,
+                                            FString::Printf(TEXT("🧪 Drop Vest: Visible? ActorHidden=%s, SkeletalVisible=%s, StaticVisible=%s"),
+                                                bHidden?TEXT("true"):TEXT("false"), bSkVisible?TEXT("true"):TEXT("false"), bStVisible?TEXT("true"):TEXT("false")));
+                                        GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Magenta,
+                                            FString::Printf(TEXT("🧪 Drop Vest: SkeletalLoc=(%.0f,%.0f,%.0f) StaticLoc=(%.0f,%.0f,%.0f)"),
+                                                SkLoc.X, SkLoc.Y, SkLoc.Z, StLoc.X, StLoc.Y, StLoc.Z));
+                                    }
+                                }
+                                else if (APickupBase* PB = Cast<APickupBase>(SpawnedActor))
+                                {
+                                    const bool bStVisible = (PB->Mesh && PB->Mesh->IsVisible());
+                                    bAnyVisible = bAnyVisible || bStVisible;
+                                    if (GEngine)
+                                    {
+                                        GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Cyan,
+                                            FString::Printf(TEXT("🧪 Drop Vest: Visible? ActorHidden=%s, StaticVisible=%s"),
+                                                bHidden?TEXT("true"):TEXT("false"), bStVisible?TEXT("true"):TEXT("false")));
+                                    }
+                                }
+                                // Маркеры на месте спавна
+                                DrawDebugSphere(World, SpawnLoc, 25.f, 16, FColor::Magenta, false, 8.0f);
+                                DrawDebugPoint(World, SpawnLoc, 25.f, FColor::Red, false, 8.0f);
+                                DrawDebugLine(World, SpawnLoc + FVector(0,0,150.f), SpawnLoc - FVector(0,0,150.f), FColor::Yellow, false, 8.0f, 0, 3.0f);
+                                DrawDebugString(World, SpawnLoc + FVector(0,0,180.f), TEXT("VEST SPAWN"), nullptr, FColor::White, 8.0f, true);
+                            }
+                            else if (GEngine)
+                            {
+                                GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Red, TEXT("❌ Drop Vest: SpawnActor returned nullptr"));
                             }
                         }
                     }
                 }
-            }
             }
         }
 		
@@ -384,6 +464,13 @@ bool UInventoryComponent::AddToEquipmentStorage(UEquippableItemData* Equipment, 
 		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ AddToEquipmentStorage: Equipment or Item is null"));
 		return false;
 	}
+
+    // Запрещаем класть предмет самого оборудования внутрь его же хранилища (рюкзак в рюкзак)
+    if (Equipment == Item)
+    {
+        if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ Нельзя поместить рюкзак в самого себя"));
+        return false;
+    }
 	
 	// Проверяем, есть ли у экипировки дополнительное хранилище
 	if (!Equipment->bHasAdditionalStorage)

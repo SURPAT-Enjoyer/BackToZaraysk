@@ -227,8 +227,8 @@ void UInventoryWidget::NativeOnInitialized()
                         Bg->SetVisibility(ESlateVisibility::HitTestInvisible);
                         if (UCanvasPanelSlot* BGS = Grid->AddChildToCanvas(Bg))
                         {
-                            BGS->SetAnchors(FAnchors(0.f,0.f,1.f,1.f));
-                            BGS->SetOffsets(FMargin(0.f));
+                            BGS->SetAnchors(FAnchors(0.0f,0.0f,1.f,1.f));
+                            BGS->SetOffsets(FMargin(0.0f));
                         }
                     }
                     // Регистрируем в координатах корневого канваса (смещение от RightPanel)
@@ -823,7 +823,7 @@ bool UInventoryWidget::IsAreaFreeInBackpack(const UEquippableItemData* BackpackD
         const bool bOverlapY = !(StartCellY + SizeY <= OtherCell.Y || OtherCell.Y + OtherSizeY <= StartCellY);
         if (bOverlapX && bOverlapY)
         {
-            return false;
+    return false;
         }
     }
     return true;
@@ -1038,7 +1038,7 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
                             const FVector2D PixRot(60.f * RotX, 60.f * RotY);
                             if (PixRot.X <= TargetSize.X && PixRot.Y <= TargetSize.Y)
                             { bOutRotate = true; return true; }
-                            return false;
+        return false;
                         };
 
                         bool bRotate = false;
@@ -1134,6 +1134,16 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
         UEquippableItemData* EquippedBackpack = InvComp ? InvComp->GetEquippedItem(Backpack) : nullptr;
         if (!EquippedBackpack) return false;
 
+        // Запрещаем класть рюкзак в самого себя
+        if (DraggedWidget->ItemData == EquippedBackpack)
+        {
+            if (GEngine)
+            {
+                GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Red, TEXT("❌ Нельзя поместить рюкзак в самого себя"));
+            }
+            return false;
+        }
+
         auto TryPlace = [&](bool bRotate) -> bool
         {
             const int32 SX = bRotate ? DraggedWidget->SizeY : DraggedWidget->SizeX;
@@ -1144,8 +1154,8 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
             if (!bFitsByPixels) return false;
             if (!IsAreaFreeInBackpack(EquippedBackpack, CellX, CellY, SX, SY, DraggedWidget->ItemData))
             {
-                return false;
-            }
+                    return false;
+                }
             // Визуально
             DraggedWidget->bRotated = bRotate;
             DraggedWidget->UpdateVisualSize(FVector2D(60.f, 60.f));
@@ -1217,6 +1227,15 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
                     return false; // не влезает в грид жилета
                 }
                 InvComp->MoveItemToVest(DraggedWidget->ItemData);
+                // Сохраняем секцию и ячейку в данных жилета
+                if (UEquippableItemData* EquippedVest = InvComp->GetEquippedItem(Vest))
+                {
+                    EquippedVest->StoredGridByItem.Add(DraggedWidget->ItemData, GridIdx);
+                    EquippedVest->PersistentGridByItem.Add(DraggedWidget->ItemData, GridIdx);
+                    // Пока предметы кладём в 0,0 внутри мини‑грида
+                    EquippedVest->StoredCellByItem.Add(DraggedWidget->ItemData, FIntPoint(0,0));
+                    EquippedVest->PersistentCellByItem.Add(DraggedWidget->ItemData, FIntPoint(0,0));
+                }
                 UpdateVestGrid();
             }
             else if (DropArea.Name.StartsWith(TEXT("карман")))
@@ -1285,8 +1304,8 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
             }
         }
     }
-    return true;
-}
+            return true;
+        }
     
 bool UInventoryWidget::NativeOnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
 {
@@ -1915,11 +1934,70 @@ void UInventoryWidget::UpdateVestGrid()
         }
     }
     
-    // Размещаем предметы в гридах (пока отключено для 6 гридов)
-    // for (int32 i = 0; i < VestItems.Num(); ++i)
-    // {
-    //     AddVestGridItemIcon(VestItems[i], i);
-    // }
+    // Перед повторным размещением очищаем все старые виджеты предметов из гридов жилета,
+    // чтобы не было дубликатов после закрытия/открытия инвентаря
+    for (UCanvasPanel* Grid : VestGrids)
+    {
+        if (!Grid) continue;
+        TArray<UWidget*> Children = Grid->GetAllChildren();
+        for (UWidget* W : Children)
+        {
+            if (UInventoryItemWidget* ItemW = Cast<UInventoryItemWidget>(W))
+            {
+                Grid->RemoveChild(ItemW);
+            }
+        }
+    }
+    // Также чистим маппинг для предметов, которые находились в гриде жилета
+    for (auto It = ItemToWidget.CreateIterator(); It; ++It)
+    {
+        if (It.Value() && VestGrids.Contains(Cast<UCanvasPanel>(It.Value()->GetParent())))
+        {
+            It.RemoveCurrent();
+        }
+    }
+
+    // Размещаем предметы: приоритетно по сохранённым координатам из StoredCellByItem/PersistentCellByItem,
+    // иначе — последовательной раскладкой
+    int32 FallbackIndex = 0;
+    for (UInventoryItemData* Data : VestItems)
+    {
+        if (!Data) continue;
+        RemoveExistingItemWidget(Data);
+        bool bPlaced = false;
+        if (EquippedVest)
+        {
+            int32* GridPtr = EquippedVest->PersistentGridByItem.Find(Data);
+            if (!GridPtr) GridPtr = EquippedVest->StoredGridByItem.Find(Data);
+            FIntPoint* CellPtr = EquippedVest->PersistentCellByItem.Find(Data);
+            if (!CellPtr) CellPtr = EquippedVest->StoredCellByItem.Find(Data);
+            if (GridPtr && *GridPtr >= 0 && *GridPtr < VestGrids.Num())
+            {
+                // Добавляем в нужный мини‑грид с позицией 0,0 (или будущей ячейкой)
+                UInventoryItemWidget* ItemWidget = WidgetTree->ConstructWidget<UInventoryItemWidget>(UInventoryItemWidget::StaticClass());
+                if (ItemWidget)
+                {
+                    ItemWidget->Init(Data, Data->Icon, FVector2D(60.f, 60.f));
+                        if (UCanvasPanel* TargetGrid = VestGrids[*GridPtr])
+                    {
+                        if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(TargetGrid->AddChildToCanvas(ItemWidget)))
+                        {
+                            CanvasSlot->SetAnchors(FAnchors(0,0,0,0));
+                            CanvasSlot->SetAlignment(FVector2D(0,0));
+                            CanvasSlot->SetPosition(FVector2D(0.f, 0.f));
+                            CanvasSlot->SetSize(FVector2D(60.f, 60.f));
+                        }
+                        ItemToWidget.Add(Data, ItemWidget);
+                        bPlaced = true;
+                    }
+                }
+            }
+        }
+        if (!bPlaced)
+        {
+            AddVestGridItemIcon(Data, FallbackIndex++);
+        }
+    }
 }
 
 
@@ -1990,6 +2068,20 @@ void UInventoryWidget::AddVestGridItemIcon(UInventoryItemData* ItemData, int32 I
     
     // Сохраняем связь
     ItemToWidget.Add(ItemData, ItemWidget);
+
+    // Обновляем StoredCellByItem для жилета минимально: по индексу кладём в PersistentCellByItem как последовательный слот,
+    // чтобы при следующем открытии восстановить расположение хотя бы стабильно
+    if (APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(GetOwningPlayerPawn()))
+    {
+        if (UInventoryComponent* Inv = PlayerChar->InventoryComponent)
+        {
+            if (UEquippableItemData* VestData = Cast<UEquippableItemData>(Inv->GetEquippedItem(Vest)))
+            {
+                VestData->StoredCellByItem.Add(ItemData, FIntPoint(CellX, CellY));
+                VestData->PersistentCellByItem.Add(ItemData, FIntPoint(CellX, CellY));
+            }
+        }
+    }
 }
 
 bool UInventoryWidget::CanDropOnVestGrid(const FGeometry& Geometry, const FVector2D& ScreenPosition) const

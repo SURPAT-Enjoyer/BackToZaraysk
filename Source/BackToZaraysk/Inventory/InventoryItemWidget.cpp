@@ -452,14 +452,13 @@ void UInventoryItemWidget::OnUnequipClicked()
                             FString::Printf(TEXT("🔍 Item bIsEquipped flag: %s"), EquippableItem->bIsEquipped ? TEXT("true") : TEXT("false")));
                     }
                     
-                    // Принудительно очищаем соответствующие UI зоны
+                    // Принудительно очищаем соответствующие UI зоны и обновляем
                     if (EquippableItem->EquipmentSlot == Vest)
                     {
-                        if (GEngine)
-                        {
-                            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("🗑️ Снят жилет - принудительно очищаем гриды"));
-                        }
                         Parent->ForceClearVestGrids();
+                        Parent->UpdateEquipmentSlots();
+                        Parent->UpdateBackpackStorageGrid();
+                        Parent->RefreshInventoryUI();
                     }
                     else if (EquippableItem->EquipmentSlot == Backpack)
                     {
