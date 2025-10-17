@@ -1227,14 +1227,33 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
                     return false; // не влезает в грид жилета
                 }
                 InvComp->MoveItemToVest(DraggedWidget->ItemData);
-                // Сохраняем секцию и ячейку в данных жилета
+                // Сохраняем секцию и ячейку в данных жилета (локальный индекс мини‑грида + внутренняя ячейка)
                 if (UEquippableItemData* EquippedVest = InvComp->GetEquippedItem(Vest))
                 {
-                    EquippedVest->StoredGridByItem.Add(DraggedWidget->ItemData, GridIdx);
-                    EquippedVest->PersistentGridByItem.Add(DraggedWidget->ItemData, GridIdx);
-                    // Пока предметы кладём в 0,0 внутри мини‑грида
-                    EquippedVest->StoredCellByItem.Add(DraggedWidget->ItemData, FIntPoint(0,0));
-                    EquippedVest->PersistentCellByItem.Add(DraggedWidget->ItemData, FIntPoint(0,0));
+                    // Преобразуем глобальный индекс GridIdx в локальный индекс жилета по имени области "жилетN"
+                    int32 VestLocalIdx = INDEX_NONE;
+                    {
+                        FString AreaName = A.Name; // например, "жилет3"
+                        if (AreaName.RemoveFromStart(TEXT("жилет")))
+                        {
+                            const int32 Parsed = FCString::Atoi(*AreaName);
+                            if (Parsed > 0) { VestLocalIdx = Parsed - 1; }
+                        }
+                    }
+                    if (VestLocalIdx == INDEX_NONE)
+                    {
+                        // fallback: если имя не парсится, ограничим глобальный индекс в диапазон мини‑гридов
+                        VestLocalIdx = FMath::Clamp(GridIdx, 0, VestGrids.Num() - 1);
+                    }
+
+                    // Ячейка внутри мини‑грида (важно для 1x2 — нижняя ячейка Y=1)
+                    const int32 InnerCellX = CellX; // для жилета A.CellsX обычно 1
+                    const int32 InnerCellY = CellY; // 0 или 1 для секций 1x2
+
+                    EquippedVest->StoredGridByItem.Add(DraggedWidget->ItemData, VestLocalIdx);
+                    EquippedVest->PersistentGridByItem.Add(DraggedWidget->ItemData, VestLocalIdx);
+                    EquippedVest->StoredCellByItem.Add(DraggedWidget->ItemData, FIntPoint(InnerCellX, InnerCellY));
+                    EquippedVest->PersistentCellByItem.Add(DraggedWidget->ItemData, FIntPoint(InnerCellX, InnerCellY));
                 }
                 UpdateVestGrid();
             }
@@ -1984,7 +2003,11 @@ void UInventoryWidget::UpdateVestGrid()
                         {
                             CanvasSlot->SetAnchors(FAnchors(0,0,0,0));
                             CanvasSlot->SetAlignment(FVector2D(0,0));
-                            CanvasSlot->SetPosition(FVector2D(0.f, 0.f));
+                            // Восстанавливаем внутреннюю ячейку (для 1x2 секций нижняя клетка Y=1)
+                            const int32 InnerX = (CellPtr ? CellPtr->X : 0);
+                            const int32 InnerY = (CellPtr ? CellPtr->Y : 0);
+                            const FVector2D CellSize(60.f, 60.f);
+                            CanvasSlot->SetPosition(FVector2D(InnerX * CellSize.X, InnerY * CellSize.Y));
                             CanvasSlot->SetSize(FVector2D(60.f, 60.f));
                         }
                         ItemToWidget.Add(Data, ItemWidget);
