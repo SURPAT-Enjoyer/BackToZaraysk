@@ -55,24 +55,21 @@
 - Git LFS
 
 ### Установка
-```bash
-# Установка Git LFS
-git lfs install
+Рекомендуемый порядок — **сначала поставить LFS**, затем клонировать репозиторий.
 
-# Клонирование репозитория
+```bash
+git lfs install
 git clone https://github.com/SURPAT-Enjoyer/BackToZaraysk.git
 cd BackToZaraysk
-
-# Открытие проекта
-# Двойной клик на BackToZaraysk.uproject или через UE Launcher
 ```
 
-### Сборка
-```bash
-# Автоматическая сборка (закрывает редактор и собирает проект)
-.\build_ue53.bat
+Дальше:
+- Откройте `BackToZaraysk.uproject` (двойной клик) и при запросе согласитесь на сборку модулей.
+- Если нужно — сгенерируйте файлы проекта VS: ПКМ по `.uproject` → **Generate Visual Studio project files**.
 
-# Затем запустите проект через UE Launcher
+### Сборка
+```powershell
+.\build_ue53.bat
 ```
 
 ## Архитектура проекта
@@ -96,6 +93,12 @@ cd BackToZaraysk
 - `.png`, `.jpg`, `.tga`, `.bmp` - Текстуры
 - `.wav`, `.ogg`, `.mp3` - Аудио
 
+Если после клона ассеты “пустые” или видите LFS pointer-файлы — выполните:
+
+```bash
+git lfs pull
+```
+
 ## Что исключено из репозитория
 
 - `Binaries/` - Скомпилированные файлы
@@ -105,50 +108,6 @@ cd BackToZaraysk
 - IDE файлы: `.vs/`, `.idea/`, `.vscode/`
 - Системные файлы: `Thumbs.db`, `.DS_Store`
 
-## Разработка
-
-### Структура кода
-- `Source/BackToZaraysk/` - Основной код проекта
-- `Content/` - Ассеты и Blueprint'ы
-- `Config/` - Конфигурационные файлы
-
-### Отладка
-- Логи сборки: `Saved/Logs/`
-- Отладочные сообщения в игре через `GEngine->AddOnScreenDebugMessage`
-
 ## Лицензия
 
-Проект разработан для образовательных целей.
-
-# BackToZaraysk (UE5)
-
-Unreal Engine 5 project.
-
-## Requirements
-- Git + Git LFS (`git lfs install`)
-- Visual Studio 2022 (C++ toolchain)
-- Unreal Engine 5.3+
-- Windows PowerShell
-
-## Clone
-```bash
-git clone <your-repo-url>
-cd BackToZaraysk
-git lfs install
-```
-
-## Build
-```powershell
-# From project root
-./build_ue53.bat
-```
-
-## Run Editor
-```powershell
-Start-Process .\BackToZaraysk.uproject
-```
-
-## Notes
-- Large assets (`*.uasset`, `*.umap`, `*.fbx`, textures, audio) are tracked by Git LFS per `.gitattributes`.
-- Do NOT commit `Binaries/`, `DerivedDataCache/`, `Intermediate/`, `Saved/`.
-- Source code and config live in `Source/` and `Config/`.
+Проект разработан для образовательных целей. Лицензия/условия использования — TBD (добавьте `LICENSE`, когда определитесь).
