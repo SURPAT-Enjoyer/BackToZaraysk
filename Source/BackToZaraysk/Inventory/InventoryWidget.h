@@ -103,6 +103,21 @@ protected:
     TArray<FPlacedItem> Placed;
     bool IsAreaFree(int32 GridIndex, int32 CellX, int32 CellY, int32 SizeX, int32 SizeY, class UInventoryItemWidget* Ignore) const;
     void UpsertPlacement(class UInventoryItemWidget* Widget, int32 GridIndex, int32 CellX, int32 CellY);
+    bool IsAreaFreeInEquipment(const class UEquippableItemData* EquipmentData,
+                               int32 StartCellX,
+                               int32 StartCellY,
+                               int32 SizeX,
+                               int32 SizeY,
+                               const class UInventoryItemData* IgnoredItem) const;
+
+    bool FindNearestFreeCellInEquipment(const class UEquippableItemData* EquipmentData,
+                                        int32 SizeX,
+                                        int32 SizeY,
+                                        int32 StartX,
+                                        int32 StartY,
+                                        int32& OutX,
+                                        int32& OutY,
+                                        const class UInventoryItemData* IgnoredItem) const;
     
     // Текущий dnd
     UPROPERTY()

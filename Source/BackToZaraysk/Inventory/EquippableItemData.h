@@ -56,6 +56,14 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment|Storage")
     TMap<TObjectPtr<class UInventoryItemData>, FIntPoint> PersistentCellByItem;
 
+    // Флаг поворота предмета внутри дополнительного хранилища (runtime)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment|Storage")
+    TMap<TObjectPtr<class UInventoryItemData>, bool> StoredRotByItem;
+
+    // Персистентная копия флага поворота
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment|Storage")
+    TMap<TObjectPtr<class UInventoryItemData>, bool> PersistentRotByItem;
+
     // Для многосекционных гридов (например, жилет из 6 мини‑гридов): в каком гриде лежит предмет
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Equipment|Storage")
     TMap<TObjectPtr<class UInventoryItemData>, int32> StoredGridByItem;

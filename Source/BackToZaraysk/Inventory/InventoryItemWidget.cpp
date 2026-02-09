@@ -16,10 +16,78 @@
 #include "BackToZaraysk/GameData/Items/Test/PickupCube.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupParallelepiped.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupBase.h"
+#include "BackToZaraysk/GameData/Items/EquipmentBase.h"
 #include "BackToZaraysk/Inventory/EquippableItemData.h"
 #include "BackToZaraysk/Components/EquipmentComponent.h"
 #include "BackToZaraysk/Characters/PlayerCharacter.h"
 #include "BackToZaraysk/GameData/Items/TacticalVest.h"
+
+namespace
+{
+    static void ForceApplyWorldVisualsForDroppedItem(AActor* SpawnedActor, UInventoryItemData* ItemData)
+    {
+        if (!SpawnedActor || !ItemData) return;
+
+        // 1) Базовый путь: кто умеет — применяет визуал по ItemInstance
+        if (AEquipmentBase* Equip = Cast<AEquipmentBase>(SpawnedActor))
+        {
+            Equip->ItemInstance = ItemData;
+            Equip->ApplyItemInstanceVisuals();
+
+            // 2) Принудительный фолбэк именно для жилета: даже если Apply отработал,
+            // дополнительно форсим назначение меша и видимость (у пользователя кейс, где меш не появляется).
+            if (UEquippableItemData* EqData = Cast<UEquippableItemData>(ItemData))
+            {
+                if (EqData->EquipmentSlot == Vest && Equip->SkeletalMesh)
+                {
+                    Equip->SetActorHiddenInGame(false);
+
+                    // Принудительно назначаем меш жилета в SkeletalMesh
+                    USkeletalMesh* ForcedMesh = nullptr;
+                    if (const UTacticalVestItemData* VestCDO = GetDefault<UTacticalVestItemData>())
+                    {
+                        ForcedMesh = Cast<USkeletalMesh>(VestCDO->EquippedMesh);
+                    }
+                    if (!ForcedMesh)
+                    {
+                        ForcedMesh = LoadObject<USkeletalMesh>(nullptr, TEXT("/Game/Insurgent_2/Mesh/Separate_Parts/SK_ChestRigSmall.SK_ChestRigSmall"));
+                    }
+
+                    if (ForcedMesh)
+                    {
+                        Equip->SkeletalMesh->SetSkeletalMesh(ForcedMesh);
+                        Equip->SkeletalMesh->SetVisibility(true, true);
+                        Equip->SkeletalMesh->SetHiddenInGame(false, true);
+                        Equip->SkeletalMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+                        Equip->SkeletalMesh->SetCollisionResponseToAllChannels(ECR_Block);
+                        Equip->SkeletalMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+                        Equip->SkeletalMesh->SetSimulatePhysics(true);
+                        Equip->SkeletalMesh->SetEnableGravity(true);
+                        Equip->SkeletalMesh->MarkRenderStateDirty();
+                        Equip->SkeletalMesh->ReregisterComponent();
+                    }
+
+                    // Статический куб/меш PickupBase скрываем, чтобы видеть только жилет
+                    if (Equip->Mesh)
+                    {
+                        Equip->Mesh->SetVisibility(false, true);
+                        Equip->Mesh->SetHiddenInGame(true, true);
+                        Equip->Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+                        Equip->Mesh->MarkRenderStateDirty();
+                    }
+                }
+            }
+            return;
+        }
+
+        if (APickupBase* Pickup = Cast<APickupBase>(SpawnedActor))
+        {
+            Pickup->ItemInstance = ItemData;
+            Pickup->ApplyItemInstanceVisuals();
+            return;
+        }
+    }
+}
 
 void UInventoryItemWidget::Init(UInventoryItemData* InData, UTexture2D* InIcon, const FVector2D& CellSize)
 {
@@ -208,15 +276,36 @@ void UInventoryItemWidget::OnDropClicked()
         UEquippableItemData* EquippableItem = Cast<UEquippableItemData>(ItemData);
         if (EquippableItem && EquippableItem->bIsEquipped)
         {
-            // Снимаем экипированный предмет и выбрасываем его
+            // ВАЖНО: UnequipItemToInventory(..., true) уже спавнит объект в мире через EquipmentComponent.
+            // Если мы пойдём дальше в общий путь bItemRemoved -> SpawnActor, получим дубль.
             if (InvComp->UnequipItemToInventory(EquippableItem->EquipmentSlot, true))
             {
-                bItemRemoved = true;
                 if (GEngine)
                 {
-                    GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Orange, 
-                        FString::Printf(TEXT("🗑️ Экипированный предмет %s снят и выброшен"), *ItemData->DisplayName.ToString()));
+                    GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Orange,
+                        FString::Printf(TEXT("🗑️ Экипированный предмет %s снят и выброшен (спавн выполнен Unequip)"), *ItemData->DisplayName.ToString()));
                 }
+
+                // Обновляем UI и выходим — НЕ спавним вручную второй раз
+                Parent->UpdateEquipmentSlots();
+                Parent->UpdateBackpackStorageGrid();
+                Parent->UpdateVestGrid();
+                Parent->RefreshInventoryUI();
+
+                // Закрыть меню
+                if (UCanvasPanel* RootLocal = Cast<UCanvasPanel>(Parent->WidgetTree->RootWidget))
+                {
+                    TArray<UWidget*> Children2 = RootLocal->GetAllChildren();
+                    for (UWidget* W2 : Children2)
+                    {
+                        if (W2 && W2->GetFName() == TEXT("ContextMenu"))
+                        {
+                            RootLocal->RemoveChild(W2);
+                            break;
+                        }
+                    }
+                }
+                return;
             }
         }
         else
@@ -247,11 +336,10 @@ void UInventoryItemWidget::OnDropClicked()
             
             if (UWorld* World = GetWorld())
             {
-                if (APickupBase* Spawned = World->SpawnActor<APickupBase>(DropClass, SpawnLoc, ViewRot, S))
+                if (AActor* SpawnedActor = World->SpawnActor<AActor>(DropClass, SpawnLoc, ViewRot, S))
                 {
-                    // Передаём текущий экземпляр данных, чтобы размеры (в т.ч. 2x2) сохранились
-                    Spawned->ItemInstance = ItemData;
-                    Spawned->ApplyItemInstanceVisuals();
+                    // Передаём текущий экземпляр данных и принудительно применяем визуал (включая фолбэк для жилета)
+                    ForceApplyWorldVisualsForDroppedItem(SpawnedActor, ItemData);
                 }
             }
             
@@ -314,8 +402,16 @@ void UInventoryItemWidget::OnEquipClicked()
                 
                 UInventoryComponent* InvComp = PlayerChar->InventoryComponent;
                 
+                // ВАЖНО: EquipItemFromInventory требует, чтобы предмет был в BackpackItems.
+                // Если предмет лежит в хранилище рюкзака/жилета/карманах, он не будет найден и экипировка провалится,
+                // хотя кнопка контекстного меню активна.
+                // Поэтому: удаляем предмет из любого хранения и временно добавляем в BackpackItems перед экипировкой.
+                InvComp->RemoveFromAnyStorage(EquippableItem);
+                InvComp->BackpackItems.AddUnique(EquippableItem);
+
                 // Экипируем предмет
-                if (InvComp->EquipItemFromInventory(EquippableItem))
+                const bool bEquipped = InvComp->EquipItemFromInventory(EquippableItem);
+                if (bEquipped)
                 {
                     if (GEngine)
                     {
@@ -327,7 +423,7 @@ void UInventoryItemWidget::OnEquipClicked()
                     Parent->ClearItemPosition(EquippableItem);
                     
                     // Обновляем UI
-                    Parent->SyncBackpack(InvComp->BackpackItems);
+                    Parent->RefreshInventoryUI();
                     
                     // Принудительно обновляем гриды после экипировки (с небольшой задержкой)
                     FTimerHandle TimerHandleEquip;
@@ -357,6 +453,8 @@ void UInventoryItemWidget::OnEquipClicked()
                 }
                 else
                 {
+                    // Если экипировка не удалась — убираем добавленный в BackpackItems предмет обратно
+                    InvComp->RemoveSpecificFromBackpack(EquippableItem);
                     if (GEngine)
                     {
                         GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 

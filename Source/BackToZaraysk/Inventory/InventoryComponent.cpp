@@ -95,9 +95,9 @@ bool UInventoryComponent::EquipItemFromInventory(UEquippableItemData* Item)
 		return false;
 	}
 
-    // Если это рюкзак и в ItemData уже есть PersistenStorage (например, после повторного подбора), 
+    // Если это рюкзак или жилет и в ItemData уже есть PersistenStorage (например, после повторного подбора), 
     // и в оперативном EquipmentStorage пусто — восстановим его перед экипировкой
-    if (Item->EquipmentSlot == Backpack)
+    if (Item->EquipmentSlot == Backpack || Item->EquipmentSlot == Vest)
     {
         TArray<TObjectPtr<UInventoryItemData>>& StorageItems = EquipmentStorage.FindOrAdd(Item);
         if (StorageItems.Num() == 0 && Item->PersistentStorage.Num() > 0)
@@ -110,6 +110,11 @@ bool UInventoryComponent::EquipItemFromInventory(UEquippableItemData* Item)
                 {
                     Item->StoredCellByItem.Add(Kvp.Key, Kvp.Value);
                 }
+            }
+            // Восстановим повороты
+            for (auto& RotKvp : Item->PersistentRotByItem)
+            {
+                Item->StoredRotByItem.Add(RotKvp.Key, RotKvp.Value);
             }
         }
     }
@@ -220,6 +225,10 @@ bool UInventoryComponent::UnequipItemToInventory(EEquipmentSlotType SlotType, bo
                     if (It && EquipItem->StoredCellByItem.Contains(It))
                     {
                         EquipItem->PersistentCellByItem.Add(It, EquipItem->StoredCellByItem[It]);
+                    }
+                    if (It && EquipItem->StoredRotByItem.Contains(It))
+                    {
+                        EquipItem->PersistentRotByItem.Add(It, EquipItem->StoredRotByItem[It]);
                     }
                 }
             }
@@ -506,7 +515,11 @@ bool UInventoryComponent::AddToEquipmentStorage(UEquippableItemData* Equipment, 
 		return false;
 	}
 	
-    StorageItems.Add(Item);
+    // Избегаем дублей: если предмет уже в оперативном списке хранилища — не добавляем повторно
+    if (!StorageItems.Contains(Item))
+    {
+        StorageItems.Add(Item);
+    }
     // Дублируем в персистентное хранилище, чтобы переживать выброс и повторное поднятие
     if (!Equipment->PersistentStorage.Contains(Item))
     {
@@ -575,6 +588,8 @@ bool UInventoryComponent::RemoveCompletelyFromEquipmentStorage(UEquippableItemDa
     Equipment->PersistentStorage.Remove(Item);
     Equipment->StoredCellByItem.Remove(Item);
     Equipment->PersistentCellByItem.Remove(Item);
+    Equipment->StoredRotByItem.Remove(Item);
+    Equipment->PersistentRotByItem.Remove(Item);
     return bRemoved;
 }
 
@@ -582,6 +597,56 @@ bool UInventoryComponent::RemoveFromAnyStorage(UInventoryItemData* Item)
 {
     if (!Item) return false;
     bool bRemoved = false;
+    
+    // Проверяем, не является ли предмет экипированным
+    if (UEquippableItemData* EquippedItem = Cast<UEquippableItemData>(Item))
+    {
+        if (EquippedItem->bIsEquipped)
+        {
+            // Снимаем экипированный предмет без выбрасывания в мир
+            if (GEngine)
+            {
+                GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Orange, 
+                    FString::Printf(TEXT("🔧 Removing equipped item from slot: %d"), (int32)EquippedItem->EquipmentSlot));
+            }
+            
+            // Снимаем с экипировки и убираем визуал с персонажа
+            if (UEquippableItemData** ItemPtr = EquipmentSlots.Find(EquippedItem->EquipmentSlot))
+            {
+                if (*ItemPtr == EquippedItem)
+                {
+                    // Проверяем состояние EquippedMesh перед снятием
+                    if (GEngine)
+                    {
+                        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, 
+                            FString::Printf(TEXT("🔍 Before unequip: EquippedMesh=%s"), 
+                                EquippedItem->EquippedMesh ? *EquippedItem->EquippedMesh->GetName() : TEXT("null")));
+                    }
+                    
+                    EquipmentSlots.Remove(EquippedItem->EquipmentSlot);
+                    EquippedItem->bIsEquipped = false;
+                    
+                    // Убираем визуал с персонажа
+                    if (UEquipmentComponent* EquipComp = GetOwner()->FindComponentByClass<UEquipmentComponent>())
+                    {
+                        EquipComp->UnequipItem(EquippedItem->EquipmentSlot);
+                    }
+                    
+                    // Проверяем состояние EquippedMesh после снятия
+                    if (GEngine)
+                    {
+                        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, 
+                            FString::Printf(TEXT("🔍 After unequip: EquippedMesh=%s"), 
+                                EquippedItem->EquippedMesh ? *EquippedItem->EquippedMesh->GetName() : TEXT("null")));
+                        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+                            FString::Printf(TEXT("✅ Item unequipped from slot: %d"), (int32)EquippedItem->EquipmentSlot));
+                    }
+                }
+            }
+            return true;
+        }
+    }
+    
     // Рюкзак
     bRemoved |= RemoveSpecificFromBackpack(Item);
     // Хранилища экипировки
@@ -766,42 +831,143 @@ bool UInventoryComponent::TryPickupItem(UInventoryItemData* Item)
         }
     }
 
-    // 2) Если экипирован рюкзак — пробуем доп. хранилище экипированного рюкзака
-    if (UEquippableItemData* EquippedBackpack = GetEquippedItem(Backpack))
+    // Вспомогательные лямбды для проверки размещения в гриде экипировки
+    auto GetGridSize = [](const UEquippableItemData* Equip) -> FIntPoint
     {
-        if (EquippedBackpack->bHasAdditionalStorage)
+        if (!Equip) return FIntPoint(0,0);
+        const int32 GX = FMath::Max(1, Equip->AdditionalGridSize.X);
+        const int32 GY = FMath::Max(1, Equip->AdditionalGridSize.Y);
+        return FIntPoint(GX, GY);
+    };
+
+    auto IsRectFree = [&](const UEquippableItemData* Equip, int32 StartX, int32 StartY, int32 SX, int32 SY, const UInventoryItemData* Ignored) -> bool
+    {
+        if (!Equip) return false;
+        const FIntPoint GS = GetGridSize(Equip);
+        if (StartX < 0 || StartY < 0) return false;
+        if (StartX + SX > GS.X || StartY + SY > GS.Y) return false;
+        for (const TPair<TObjectPtr<UInventoryItemData>, FIntPoint>& Pair : Equip->StoredCellByItem)
         {
-            if (AddToEquipmentStorage(EquippedBackpack, Item))
+            UInventoryItemData* Other = Pair.Key;
+            if (!Other || Other == Ignored) continue;
+            const FIntPoint OtherCell = Pair.Value;
+            const bool bOtherRot = Equip->PersistentRotByItem.Contains(Other) ? Equip->PersistentRotByItem[Other] : (Equip->StoredRotByItem.Contains(Other) ? Equip->StoredRotByItem[Other] : false);
+            const int32 OtherSX = bOtherRot ? FMath::Max(1, Other->SizeInCellsY) : FMath::Max(1, Other->SizeInCellsX);
+            const int32 OtherSY = bOtherRot ? FMath::Max(1, Other->SizeInCellsX) : FMath::Max(1, Other->SizeInCellsY);
+            const bool overlapX = !(StartX + SX <= OtherCell.X || OtherCell.X + OtherSX <= StartX);
+            const bool overlapY = !(StartY + SY <= OtherCell.Y || OtherCell.Y + OtherSY <= StartY);
+            if (overlapX && overlapY) return false;
+        }
+        return true;
+    };
+
+    auto FindPlacement = [&](UEquippableItemData* Equip, const UInventoryItemData* It, int32& OutX, int32& OutY, bool& bOutRot) -> bool
+    {
+        if (!Equip || !It || !Equip->bHasAdditionalStorage) return false;
+        const FIntPoint GS = GetGridSize(Equip);
+        // Перебираем клетки слева-вверх → справа-вниз
+        for (int32 y = 0; y < GS.Y; ++y)
+        {
+            for (int32 x = 0; x < GS.X; ++x)
             {
-                return true;
+                // Сначала без поворота
+                int32 SX = FMath::Max(1, It->SizeInCellsX);
+                int32 SY = FMath::Max(1, It->SizeInCellsY);
+                if (IsRectFree(Equip, x, y, SX, SY, It))
+                {
+                    OutX = x; OutY = y; bOutRot = false; return true;
+                }
+                // Затем с поворотом
+                SX = FMath::Max(1, It->SizeInCellsY);
+                SY = FMath::Max(1, It->SizeInCellsX);
+                if (IsRectFree(Equip, x, y, SX, SY, It))
+                {
+                    OutX = x; OutY = y; bOutRot = true; return true;
+                }
             }
         }
-    }
+        return false;
+    };
 
-    // 3) Если в рюкзаке нет места или он не экипирован — пробуем карманы (по одному 1x1)
-    const FIntPoint OneCell(1,1);
+    // 2) Пытаемся положить в карманы (одна 1x1 ячейка на карман)
     if (Item->SizeInCellsX == 1 && Item->SizeInCellsY == 1)
     {
-        if (AddToGridLike(Pocket1Items, OneCell, Item)) return true;
-        if (AddToGridLike(Pocket2Items, OneCell, Item)) return true;
-        if (AddToGridLike(Pocket3Items, OneCell, Item)) return true;
-        if (AddToGridLike(Pocket4Items, OneCell, Item)) return true;
+        const FIntPoint OneCell(1,1);
+        if (Pocket1Items.Num() < 1 && AddToGridLike(Pocket1Items, OneCell, Item)) return true;
+        if (Pocket2Items.Num() < 1 && AddToGridLike(Pocket2Items, OneCell, Item)) return true;
+        if (Pocket3Items.Num() < 1 && AddToGridLike(Pocket3Items, OneCell, Item)) return true;
+        if (Pocket4Items.Num() < 1 && AddToGridLike(Pocket4Items, OneCell, Item)) return true;
     }
 
-    // 4) Если в карманах нет места — пробуем жилет
-    if (UEquippableItemData* EquippedVest = GetEquippedItem(Vest))
+    // 3) Пытаемся положить в рюкзак с проверкой соседних свободных клеток и автоповоротом
+    if (UEquippableItemData* EquippedBackpack = GetEquippedItem(Backpack))
     {
-        if (EquippedVest->bHasAdditionalStorage)
+        int32 CellX=0, CellY=0; bool bRot=false;
+        if (FindPlacement(EquippedBackpack, Item, CellX, CellY, bRot))
         {
-            if (AddToEquipmentStorage(EquippedVest, Item))
+            RemoveFromAnyStorage(Item);
+            if (AddToEquipmentStorage(EquippedBackpack, Item))
             {
+                EquippedBackpack->StoredCellByItem.Add(Item, FIntPoint(CellX, CellY));
+                EquippedBackpack->PersistentCellByItem.Add(Item, FIntPoint(CellX, CellY));
+                EquippedBackpack->StoredRotByItem.Add(Item, bRot);
+                EquippedBackpack->PersistentRotByItem.Add(Item, bRot);
                 return true;
             }
         }
     }
 
-    // Иначе — не подбираем
-    if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Yellow, TEXT("⚠️ TryPickupItem: No space in pockets/backpack/vest"));
+    // 4) Пытаемся положить в жилет: ширина секции всегда 1, колонки 2 и 3 (0-based) имеют высоту 2, остальные высота 1
+    if (UEquippableItemData* EquippedVest = GetEquippedItem(Vest))
+    {
+        auto IsTallColumn = [](int32 Col) { return Col == 2 || Col == 3; };
+        const int32 ItemW = FMath::Max(1, Item->SizeInCellsX);
+        const int32 ItemH = FMath::Max(1, Item->SizeInCellsY);
+        // 2x2 никогда не влезет в секции жилета (ширина секции = 1)
+        if (!(ItemW == 2 && ItemH == 2))
+        {
+            // Перебираем колонки 0..5
+            for (int32 col = 0; col < 6; ++col)
+            {
+                const int32 colHeight = IsTallColumn(col) ? 2 : 1;
+                // Кандидаты ориентаций: только ширина 1 допустима
+                struct { int32 W; int32 H; bool bRot; } Candidates[2] = {
+                    { ItemW, ItemH, false },
+                    { ItemH, ItemW, true }
+                };
+                for (const auto& C : Candidates)
+                {
+                    if (C.W != 1) continue; // ширина секции строго 1
+                    if (C.H > colHeight) continue; // не помещается по высоте в эту колонку
+                    const int32 startYMax = colHeight - C.H;
+                    for (int32 y = 0; y <= startYMax; ++y)
+                    {
+                        if (IsRectFree(EquippedVest, col, y, C.W, C.H, Item))
+                        {
+                            // Нашли место
+                            RemoveFromAnyStorage(Item);
+                            if (AddToEquipmentStorage(EquippedVest, Item))
+                            {
+                                EquippedVest->StoredCellByItem.Add(Item, FIntPoint(col, y));
+                                EquippedVest->PersistentCellByItem.Add(Item, FIntPoint(col, y));
+                                EquippedVest->StoredRotByItem.Add(Item, C.bRot);
+                                EquippedVest->PersistentRotByItem.Add(Item, C.bRot);
+                                return true;
+                            }
+                            else
+                            {
+                                // Если добавить в хранилище не удалось — прекращаем поиск
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Иначе — не подбираем (нет континуального места ни в одном хранилище)
+    if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Yellow, TEXT("⚠️ TryPickupItem: No contiguous free cells in pockets/backpack/vest"));
     return false;
 }
 
@@ -810,10 +976,9 @@ bool UInventoryComponent::MoveItemToVest(UInventoryItemData* Item)
     if (!Item) return false;
     if (UEquippableItemData* EquippedVest = GetEquippedItem(Vest))
     {
-        // Удаляем из всех возможных мест хранения
-        RemoveSpecificFromBackpack(Item);
-        if (UEquippableItemData* EquippedBackpack = GetEquippedItem(Backpack)) { RemoveFromEquipmentStorage(EquippedBackpack, Item); }
-        RemoveFromEquipmentStorage(EquippedVest, Item);
+        // Удаляем из ВСЕХ возможных мест хранения (включая карманы/пояс),
+        // иначе предмет может дублироваться (например, остаться в кармане и одновременно оказаться в жилете).
+        RemoveFromAnyStorage(Item);
         // Пытаемся положить в жилет
         if (EquippedVest->bHasAdditionalStorage)
         {

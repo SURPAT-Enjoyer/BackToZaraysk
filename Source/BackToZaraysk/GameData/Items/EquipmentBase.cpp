@@ -34,13 +34,98 @@ void AEquipmentBase::ApplyItemInstanceVisuals()
     // Настраиваем вид из ItemInstance: если это UEquippableItemData с SkeletalMesh/StaticMesh
     if (!ItemInstance)
     {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ ApplyItemInstanceVisuals: ItemInstance is null"));
+        }
         return;
     }
     UEquippableItemData* EqData = Cast<UEquippableItemData>(ItemInstance);
     if (!EqData)
     {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ ApplyItemInstanceVisuals: ItemInstance is not UEquippableItemData"));
+        }
         return;
     }
+    
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, 
+            FString::Printf(TEXT("🎭 ApplyItemInstanceVisuals: Item=%s, EquippedMesh=%s"), 
+                *EqData->DisplayName.ToString(),
+                EqData->EquippedMesh ? *EqData->EquippedMesh->GetName() : TEXT("null")));
+    }
+    
+    // Если EquippedMesh стал недействительным, попробуем восстановить его
+    if (!EqData->EquippedMesh || !EqData->EquippedMesh->IsValidLowLevel())
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Orange, 
+                FString::Printf(TEXT("🔧 EquippedMesh is invalid for %s, attempting to restore..."), *EqData->DisplayName.ToString()));
+        }
+        
+        // Восстанавливаем EquippedMesh для жилета
+        if (EqData->EquipmentSlot == Vest)
+        {
+            // Пробуем несколько путей для меша жилета
+            TArray<FString> VestMeshPaths = {
+                TEXT("/Game/Insurgent_2/Mesh/Separate_Parts/SK_ChestRigSmall.SK_ChestRigSmall"),
+                TEXT("/Game/insurgent_2/Characters/SK_ChestRigSmall.SK_ChestRigSmall"),
+                TEXT("/Game/BackToZaraysk/Core/Items/Meshes/SK_ChestRigSmall.SK_ChestRigSmall")
+            };
+            
+            bool bRestored = false;
+            for (const FString& MeshPath : VestMeshPaths)
+            {
+                EqData->EquippedMesh = LoadObject<USkeletalMesh>(nullptr, *MeshPath);
+                if (EqData->EquippedMesh && EqData->EquippedMesh->IsValidLowLevel())
+                {
+                    if (GEngine)
+                    {
+                        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+                            FString::Printf(TEXT("✅ Restored Vest EquippedMesh: %s from %s"), 
+                                *EqData->EquippedMesh->GetName(), *MeshPath));
+                    }
+                    bRestored = true;
+                    break;
+                }
+            }
+            
+            if (!bRestored)
+            {
+                if (GEngine)
+                {
+                    GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ Failed to restore Vest EquippedMesh from all paths"));
+                }
+            }
+        }
+        // Восстанавливаем EquippedMesh для рюкзака
+        else if (EqData->EquipmentSlot == Backpack)
+        {
+            FString MeshPath = TEXT("/Engine/BasicShapes/Cube.Cube");
+            EqData->EquippedMesh = LoadObject<UStaticMesh>(nullptr, *MeshPath);
+            
+            if (EqData->EquippedMesh && EqData->EquippedMesh->IsValidLowLevel())
+            {
+                if (GEngine)
+                {
+                    GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+                        FString::Printf(TEXT("✅ Restored Backpack EquippedMesh: %s"), *EqData->EquippedMesh->GetName()));
+                }
+            }
+            else
+            {
+                if (GEngine)
+                {
+                    GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ Failed to restore Backpack EquippedMesh"));
+                }
+            }
+        }
+    }
+    
     // Если задан скелетный меш в данных — отобразим SkeletalMesh
     USkeletalMesh* AsSkeletal = Cast<USkeletalMesh>(EqData->EquippedMesh);
     UStaticMesh* AsStatic = Cast<UStaticMesh>(EqData->EquippedMesh);
@@ -55,6 +140,11 @@ void AEquipmentBase::ApplyItemInstanceVisuals()
             Mesh->SetHiddenInGame(true, true);
             Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
         }
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+                FString::Printf(TEXT("✅ Applied SkeletalMesh: %s"), *AsSkeletal->GetName()));
+        }
         return;
     }
     if (AsStatic && Mesh)
@@ -64,6 +154,20 @@ void AEquipmentBase::ApplyItemInstanceVisuals()
         Mesh->SetHiddenInGame(false, true);
         SkeletalMesh->SetVisibility(false, true);
         SkeletalMesh->SetHiddenInGame(true, true);
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
+                FString::Printf(TEXT("✅ Applied StaticMesh: %s"), *AsStatic->GetName()));
+        }
+        return;
+    }
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, 
+            FString::Printf(TEXT("❌ No valid mesh to apply. EquippedMesh=%s, SkeletalMesh=%s, Mesh=%s"), 
+                EqData->EquippedMesh ? *EqData->EquippedMesh->GetName() : TEXT("null"),
+                SkeletalMesh ? TEXT("valid") : TEXT("null"),
+                Mesh ? TEXT("valid") : TEXT("null")));
     }
 }
 
