@@ -15,7 +15,8 @@ enum EEquipmentSlotType : uint8
     Backpack        UMETA(DisplayName = "Рюкзак"),
     PrimaryWeapon   UMETA(DisplayName = "Основное оружие"),
     SecondaryWeapon UMETA(DisplayName = "Запасное оружие"),
-    Melee           UMETA(DisplayName = "Холодное оружие")
+    Melee           UMETA(DisplayName = "Холодное оружие"),
+    Armor           UMETA(DisplayName = "Бронежилет") // Бронежилет (без доп. хранилищ)
 };
 
 

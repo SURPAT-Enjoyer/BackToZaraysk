@@ -118,8 +118,8 @@ FObstacleData UObstacleClimbingComponent::DetectObstacle()
 	FCollisionQueryParams QueryParams;
 	QueryParams.AddIgnoredActor(Character);
 
-	// ВАЖНО: Добавляем debug-рисование трассировки
-	DrawDebugLine(GetWorld(), TraceStart, TraceEnd, FColor::Red, false, 3.0f, 0, 3.0f);
+	// Debug-рисование отключено (мешает в игре/редакторе)
+	// DrawDebugLine(GetWorld(), TraceStart, TraceEnd, FColor::Red, false, 3.0f, 0, 3.0f);
 
 	// Первая трассировка: есть ли препятствие впереди?
 	bool bHit = GetWorld()->LineTraceSingleByChannel(

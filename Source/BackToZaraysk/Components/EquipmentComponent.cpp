@@ -7,6 +7,9 @@
 #include "Engine/SkeletalMesh.h"
 // For backpack pickup spawn on drop
 #include "BackToZaraysk/GameData/Items/Test/PickupBackpack.h"
+// For generic pickup mapping
+#include "BackToZaraysk/Inventory/InventoryItemData.h"
+#include "BackToZaraysk/GameData/Items/EquipmentBase.h"
 
 UEquipmentComponent::UEquipmentComponent()
 {
@@ -166,6 +169,86 @@ bool UEquipmentComponent::UnequipItem(EEquipmentSlotType SlotType, bool bDropToW
                         if (APickupBackpack* Pickup = World->SpawnActor<APickupBackpack>(APickupBackpack::StaticClass(), SpawnLoc, SpawnRot, Params))
                         {
                             Pickup->ItemInstance = ItemData; // сохраняем все данные, включая PersistentStorage
+                        }
+                    }
+                }
+            }
+            else if (SlotType != Vest) // Vest спавнится в InventoryComponent (там своя логика/диагностика)
+            {
+                if (ACharacter* Character = Cast<ACharacter>(GetOwner()))
+                {
+                    FVector ViewLoc; FRotator ViewRot;
+                    Character->GetActorEyesViewPoint(ViewLoc, ViewRot);
+                    FVector SpawnLoc = ViewLoc + ViewRot.Vector() * 80.f + FVector(0.f, 0.f, 100.f);
+                    // Для бронежилета — спавним от позиции root на меше (иначе может улетать вверх из-за вьюпоинта/камеры)
+                    if (SlotType == Armor)
+                    {
+                        if (USkeletalMeshComponent* M = Character->GetMesh())
+                        {
+                            const FName RootSocket(TEXT("root"));
+                            if (M->DoesSocketExist(RootSocket))
+                            {
+                                SpawnLoc = M->GetSocketLocation(RootSocket) + Character->GetActorForwardVector() * 80.f;
+                            }
+                            else
+                            {
+                                SpawnLoc = Character->GetActorLocation() + Character->GetActorForwardVector() * 80.f;
+                            }
+                        }
+                    }
+                    const FRotator SpawnRot = ViewRot;
+                    FActorSpawnParameters Params;
+                    Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+                    if (UWorld* World = GetWorld())
+                    {
+                        extern TSubclassOf<AActor> GetPickupClassForItem_Internal(const UInventoryItemData* ItemData);
+                        TSubclassOf<AActor> DropClass = GetPickupClassForItem_Internal(ItemData);
+                        if (DropClass)
+                        {
+                            if (AActor* SpawnedActor = World->SpawnActor<AActor>(DropClass, SpawnLoc, SpawnRot, Params))
+                            {
+                                if (AEquipmentBase* AsEquip = Cast<AEquipmentBase>(SpawnedActor))
+                                {
+                                    AsEquip->ItemInstance = ItemData;
+                                    AsEquip->ApplyItemInstanceVisuals();
+                                    AsEquip->SetActorHiddenInGame(false);
+                                    // Делаем физику/коллизию стабильной: держим её на статическом Mesh даже если визуал на SkeletalMesh
+                                    if (AsEquip->Mesh)
+                                    {
+                                        AsEquip->Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+                                        AsEquip->Mesh->SetCollisionProfileName(TEXT("BlockAllDynamic"));
+                                        AsEquip->Mesh->SetSimulatePhysics(true);
+                                        AsEquip->Mesh->SetEnableGravity(true);
+                                        AsEquip->Mesh->SetUseCCD(true);
+                                        AsEquip->Mesh->AddImpulse(FVector(0.f, 0.f, 150.f), NAME_None, true);
+                                    }
+                                    if (AsEquip->SkeletalMesh)
+                                    {
+                                        AsEquip->SkeletalMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+                                        AsEquip->SkeletalMesh->SetCollisionProfileName(TEXT("BlockAllDynamic"));
+                                        AsEquip->SkeletalMesh->SetUseCCD(true);
+                                        if (AsEquip->SkeletalMesh->GetPhysicsAsset())
+                                        {
+                                            AsEquip->SkeletalMesh->SetSimulatePhysics(true);
+                                            AsEquip->SkeletalMesh->SetEnableGravity(true);
+                                        }
+                                    }
+                                }
+                                else if (APickupBase* Spawned = Cast<APickupBase>(SpawnedActor))
+                                {
+                                    Spawned->ItemInstance = ItemData;
+                                    Spawned->ApplyItemInstanceVisuals();
+                                    if (Spawned->Mesh)
+                                    {
+                                        Spawned->Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+                                        Spawned->Mesh->SetCollisionProfileName(TEXT("BlockAllDynamic"));
+                                        Spawned->Mesh->SetSimulatePhysics(true);
+                                        Spawned->Mesh->SetEnableGravity(true);
+                                        Spawned->Mesh->SetUseCCD(true);
+                                        Spawned->Mesh->AddImpulse(FVector(0.f, 0.f, 150.f), NAME_None, true);
+                                    }
+                                }
+                            }
                         }
                     }
                 }

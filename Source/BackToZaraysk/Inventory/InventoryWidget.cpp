@@ -432,8 +432,30 @@ void UInventoryWidget::NativeOnInitialized()
             AddEquipSlot(TEXT("штаны"), FVector2D(SilCenterX - SlotHalfWidth, HeadY + Segment * 2.f));
             AddEquipSlot(TEXT("обувь"), FVector2D(SilCenterX - SlotHalfWidth, ShoeY));
 
-            // Бронежилет на уровне слота "тело" (по Y как у тела, по X левый столбец)
-            AddEquipSlot(TEXT("бронежилет"), FVector2D(60.f, HeadY + Segment * 1.f));
+            // Бронежилет на уровне слота "тело" (интерактивный слот)
+            {
+                UTextBlock* ArmorLabel = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+                ArmorLabel->SetText(FText::FromString(TEXT("бронежилет")));
+                ArmorLabel->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+                ArmorSlotRef = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("ArmorSlot"));
+                ArmorSlotRef->SetBrushColor(FLinearColor(1.f,1.f,1.f,0.05f));
+
+                const FVector2D ArmorPos = FVector2D(60.f, HeadY + Segment * 1.f);
+                if (UCanvasPanelSlot* ArmorLabelSlot = Canvas->AddChildToCanvas(ArmorLabel))
+                {
+                    ArmorLabelSlot->SetAnchors(FAnchors(0.f, 0.f, 0.f, 0.f));
+                    ArmorLabelSlot->SetAlignment(FVector2D(0.f, 0.f));
+                    ArmorLabelSlot->SetPosition(ArmorPos);
+                    ArmorLabelSlot->SetSize(FVector2D(120.f, 20.f));
+                }
+                if (UCanvasPanelSlot* ArmorSlotCanvas = Canvas->AddChildToCanvas(ArmorSlotRef))
+                {
+                    ArmorSlotCanvas->SetAnchors(FAnchors(0.f, 0.f, 0.f, 0.f));
+                    ArmorSlotCanvas->SetAlignment(FVector2D(0.f, 0.f));
+                    ArmorSlotCanvas->SetPosition(ArmorPos + FVector2D(0.f, 20.f));
+                    ArmorSlotCanvas->SetSize(FVector2D(120.f, 80.f));
+                }
+            }
             // Разгрузка рядом с бронежилетом - сохраняем ссылку
             UTextBlock* VestLabel = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
             VestLabel->SetText(FText::FromString(TEXT("разгрузка")));
@@ -690,6 +712,35 @@ void UInventoryWidget::UpdateStaticEquipmentSlots()
         }
         VestSlotRef = VestSlotBorder;
     }
+
+    // Слот бронежилета
+    if (!ArmorSlotRef)
+    {
+        if (UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("ArmorSlotLabel")))
+        {
+            Label->SetText(FText::FromString(TEXT("бронежилет")));
+            Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+            if (UCanvasPanelSlot* LS = Cast<UCanvasPanelSlot>(EquipmentPanelRef->AddChildToCanvas(Label)))
+            {
+                LS->SetAnchors(FAnchors(0.f, 0.f, 0.f, 0.f));
+                LS->SetAlignment(FVector2D(0.f, 0.f));
+                LS->SetPosition(FVector2D(10.f, 10.f));
+                LS->SetZOrder(19);
+            }
+        }
+
+        UBorder* ArmorSlotBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("ArmorSlotFallback"));
+        ArmorSlotBorder->SetBrushColor(FLinearColor(1.f,1.f,1.f,0.05f));
+        if (UCanvasPanelSlot* S = Cast<UCanvasPanelSlot>(EquipmentPanelRef->AddChildToCanvas(ArmorSlotBorder)))
+        {
+            S->SetAnchors(FAnchors(0.f, 0.f, 0.f, 0.f));
+            S->SetAlignment(FVector2D(0.f, 0.f));
+            S->SetPosition(FVector2D(10.f, 30.f));
+            S->SetSize(EquipmentSlotSize);
+            S->SetZOrder(20);
+        }
+        ArmorSlotRef = ArmorSlotBorder;
+    }
 }
 
 void UInventoryWidget::UpdateEquipmentSlots()
@@ -707,12 +758,30 @@ void UInventoryWidget::UpdateEquipmentSlots()
         VestSlotRef->ClearChildren();
         VestItemWidgetRef = nullptr;
     }
+    if (ArmorSlotRef && ArmorItemWidgetRef)
+    {
+        ArmorSlotRef->ClearChildren();
+        ArmorItemWidgetRef = nullptr;
+    }
 
     // Получаем экипированный рюкзак и отображаем его в слоте
     if (APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(GetOwningPlayerPawn()))
     {
         if (UInventoryComponent* InvComp = PlayerChar->InventoryComponent)
         {
+            // Бронежилет
+            if (UEquippableItemData* EquippedArmor = InvComp->GetEquippedItem(Armor))
+            {
+                if (ArmorSlotRef)
+                {
+                    UInventoryItemWidget* ItemW = WidgetTree->ConstructWidget<UInventoryItemWidget>(UInventoryItemWidget::StaticClass());
+                    ItemW->bIsStaticEquipmentSlot = true;
+                    ItemW->Init(EquippedArmor, EquippedArmor->Icon, EquipmentSlotSize);
+                    ArmorSlotRef->SetContent(ItemW);
+                    ArmorItemWidgetRef = ItemW;
+                }
+            }
+
             // Жилет
             if (UEquippableItemData* EquippedVest = InvComp->GetEquippedItem(Vest))
             {
@@ -1341,6 +1410,51 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
         return false;
     }
 
+    if (ArmorSlotRef && ArmorSlotRef->GetCachedGeometry().IsUnderLocation(ScreenPos))
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, TEXT("🎯 Drop detected on Armor Slot"));
+        }
+
+        if (UEquippableItemData* ArmorItem = Cast<UEquippableItemData>(DraggedWidget->ItemData))
+        {
+            if (ArmorItem->EquipmentSlot == Armor)
+            {
+                if (APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(GetOwningPlayerPawn()))
+                {
+                    if (UInventoryComponent* InvComp = PlayerChar->InventoryComponent)
+                    {
+                        // Если слот бронежилета занят — снимаем текущий бронежилет (в инвентарь)
+                        if (InvComp->GetEquippedItem(Armor) != nullptr)
+                        {
+                            const bool bUnequippedOld = InvComp->UnequipItemToInventory(Armor, false);
+                            if (!bUnequippedOld)
+                            {
+                                if (GEngine) { GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ Failed to unequip current armor before equipping new one")); }
+                                return false;
+                            }
+                        }
+
+                        InvComp->RemoveFromAnyStorage(DraggedWidget->ItemData);
+                        InvComp->BackpackItems.AddUnique(ArmorItem);
+
+                        if (InvComp->EquipItemFromInventory(ArmorItem))
+                        {
+                            DraggedWidget->SetTint(FLinearColor(1.f, 1.f, 1.f, 1.f));
+                            UpdateEquipmentSlots();
+                            UpdateBackpackStorageGrid();
+                            UpdateVestGrid();
+                            RefreshInventoryUI();
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     if (BackpackSlotRef && BackpackSlotRef->GetCachedGeometry().IsUnderLocation(ScreenPos))
     {
         // Дроп на слот рюкзака
@@ -1867,6 +1981,12 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
                 UpdateBackpackStorageGrid();
                 RefreshInventoryUI();
             }
+            else if (EquippedItem->EquipmentSlot == Armor)
+            {
+                // Бронежилет не имеет гридов — просто обновляем слоты/интерфейс
+                UpdateEquipmentSlots();
+                RefreshInventoryUI();
+            }
         }
     }
     
@@ -1893,6 +2013,20 @@ bool UInventoryWidget::NativeOnDragOver(const FGeometry& InGeometry, const FDrag
             if (UEquippableItemData* VestItem = Cast<UEquippableItemData>(DraggedWidget->ItemData))
             {
                 if (VestItem->EquipmentSlot == Vest)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    if (ArmorSlotRef && ArmorSlotRef->GetCachedGeometry().IsUnderLocation(ScreenPos))
+    {
+        if (UInventoryItemWidget* DraggedWidget = Cast<UInventoryItemWidget>(InOperation ? InOperation->Payload : nullptr))
+        {
+            if (UEquippableItemData* ArmorItem = Cast<UEquippableItemData>(DraggedWidget->ItemData))
+            {
+                if (ArmorItem->EquipmentSlot == Armor)
                 {
                     return true;
                 }

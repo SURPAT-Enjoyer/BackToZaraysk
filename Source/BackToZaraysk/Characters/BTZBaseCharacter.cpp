@@ -228,7 +228,7 @@ float ABTZBaseCharacter::GetIKOffsetForASocket(const FName& SocketName)
 	TArray<AActor*> ActorsToIgnore;
 	ActorsToIgnore.Add(this);
 
-    if (UKismetSystemLibrary::LineTraceSingle(GetWorld(), TraceStart, TraceEnd, TraceType, true, ActorsToIgnore, EDrawDebugTrace::ForOneFrame, HitResult, true))
+    if (UKismetSystemLibrary::LineTraceSingle(GetWorld(), TraceStart, TraceEnd, TraceType, true, ActorsToIgnore, EDrawDebugTrace::None, HitResult, true))
 	{
         // ИСПРАВЛЕНО: Правильный расчет смещения для ИК
         // Если земля ниже сокета - нога должна опуститься (отрицательное смещение)
@@ -245,7 +245,7 @@ float ABTZBaseCharacter::GetIKOffsetForASocket(const FName& SocketName)
     {
     	// ИСПРАВЛЕНО: Улучшенный fallback trace с большим расстоянием
     	FVector FallbackTraceEnd = SocketLocation - FVector(0.f, 0.f, 80.0f); // Увеличено для лучшего обнаружения
-    	if (UKismetSystemLibrary::LineTraceSingle(GetWorld(), TraceStart, FallbackTraceEnd, TraceType, true, ActorsToIgnore, EDrawDebugTrace::ForOneFrame, HitResult, true))
+    	if (UKismetSystemLibrary::LineTraceSingle(GetWorld(), TraceStart, FallbackTraceEnd, TraceType, true, ActorsToIgnore, EDrawDebugTrace::None, HitResult, true))
     	{
     		float RawOffset = SocketLocation.Z - HitResult.Location.Z;
     		Result = RawOffset;

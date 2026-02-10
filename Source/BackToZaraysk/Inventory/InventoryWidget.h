@@ -157,6 +157,12 @@ public:
     class UBorder* VestSlotRef = nullptr; // Ссылка на слот "разгрузка"
     UPROPERTY()
     class UInventoryItemWidget* VestItemWidgetRef = nullptr; // Ссылка на виджет предмета в слоте разгрузки
+
+    // Слот бронежилета
+    UPROPERTY()
+    class UBorder* ArmorSlotRef = nullptr; // Ссылка на слот "бронежилет"
+    UPROPERTY()
+    class UInventoryItemWidget* ArmorItemWidgetRef = nullptr; // Ссылка на виджет предмета в слоте бронежилета
     
     // Гриды жилета (6 отдельных гридов)
     UPROPERTY()

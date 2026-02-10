@@ -144,6 +144,9 @@ void ABTZPlayerController::Interact()
                         Pickup->Destroy();
                         return;
                     }
+                    // ВАЖНО: этот блок копирования DataAsset должен применяться ТОЛЬКО к тактическому жилету.
+                    // Иначе он перезапишет свойства других экипируемых предметов (например, бронежилета) и сломает логику слотов.
+                    if (Cast<ATacticalVest>(Pickup))
                     {
                         FString DataAssetPath = TEXT("/Game/BackToZaraysk/Core/Items/Equipment/DA_TacticalVest.DA_TacticalVest");
                         UObject* LoadedDataAsset = LoadObject<UObject>(nullptr, *DataAssetPath);
@@ -194,7 +197,7 @@ void ABTZPlayerController::Interact()
                                     TEXT("❌ Failed to load Data Asset from path!"));
                             }
                         }
-                    }
+                    } // end TacticalVest-only block
                     
                     if (GEngine)
                     {

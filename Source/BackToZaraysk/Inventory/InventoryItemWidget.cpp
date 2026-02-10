@@ -21,9 +21,56 @@
 #include "BackToZaraysk/Components/EquipmentComponent.h"
 #include "BackToZaraysk/Characters/PlayerCharacter.h"
 #include "BackToZaraysk/GameData/Items/TacticalVest.h"
+#include "Components/SkeletalMeshComponent.h"
 
 namespace
 {
+    static void EnsureDroppedActorHasPhysics(AActor* SpawnedActor)
+    {
+        if (!SpawnedActor) return;
+        if (AEquipmentBase* Equip = Cast<AEquipmentBase>(SpawnedActor))
+        {
+            Equip->SetActorHiddenInGame(false);
+
+            // ВАЖНО: даже если визуал — SkeletalMesh, оставляем коллизию/физику на статическом Mesh (может быть скрыт),
+            // иначе предметы с SkeletalMesh без PhysicsAsset могут проваливаться/исчезать.
+            if (Equip->Mesh)
+            {
+                Equip->Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+                Equip->Mesh->SetCollisionProfileName(TEXT("BlockAllDynamic"));
+                Equip->Mesh->SetSimulatePhysics(true);
+                Equip->Mesh->SetEnableGravity(true);
+                Equip->Mesh->SetUseCCD(true);
+                Equip->Mesh->AddImpulse(FVector(0.f, 0.f, 150.f), NAME_None, true);
+            }
+            if (Equip->SkeletalMesh)
+            {
+                Equip->SkeletalMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+                Equip->SkeletalMesh->SetCollisionProfileName(TEXT("BlockAllDynamic"));
+                Equip->SkeletalMesh->SetUseCCD(true);
+                // SimulatePhysics для SkeletalMesh включаем только если есть PhysicsAsset
+                if (Equip->SkeletalMesh->GetPhysicsAsset())
+                {
+                    Equip->SkeletalMesh->SetSimulatePhysics(true);
+                    Equip->SkeletalMesh->SetEnableGravity(true);
+                }
+            }
+            return;
+        }
+        if (APickupBase* PB = Cast<APickupBase>(SpawnedActor))
+        {
+            if (PB->Mesh)
+            {
+                PB->Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+                PB->Mesh->SetCollisionProfileName(TEXT("BlockAllDynamic"));
+                PB->Mesh->SetSimulatePhysics(true);
+                PB->Mesh->SetEnableGravity(true);
+                PB->Mesh->SetUseCCD(true);
+                PB->Mesh->AddImpulse(FVector(0.f, 0.f, 150.f), NAME_None, true);
+            }
+        }
+    }
+
     static void ForceApplyWorldVisualsForDroppedItem(AActor* SpawnedActor, UInventoryItemData* ItemData)
     {
         if (!SpawnedActor || !ItemData) return;
@@ -33,6 +80,7 @@ namespace
         {
             Equip->ItemInstance = ItemData;
             Equip->ApplyItemInstanceVisuals();
+            EnsureDroppedActorHasPhysics(SpawnedActor);
 
             // 2) Принудительный фолбэк именно для жилета: даже если Apply отработал,
             // дополнительно форсим назначение меша и видимость (у пользователя кейс, где меш не появляется).
@@ -84,6 +132,7 @@ namespace
         {
             Pickup->ItemInstance = ItemData;
             Pickup->ApplyItemInstanceVisuals();
+            EnsureDroppedActorHasPhysics(SpawnedActor);
             return;
         }
     }
@@ -163,10 +212,13 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
                         UnequipTxt->SetText(FText::FromString(TEXT("Снять")));
                         UnequipBtn->AddChild(UnequipTxt);
                         VBox->AddChildToVerticalBox(UnequipBtn);
-                                // Кнопка активна только для жилета в соответствующем слоте; для остальных — неактивна
-                                const bool bIsEquippedVest = (EquippableItem->EquipmentSlot == Vest);
-                                UnequipBtn->SetIsEnabled(bIsEquippedVest);
-                                if (!bIsEquippedVest)
+                                // Разрешаем "Снять" для слотов, которые реально поддерживаем в UI/логике
+                                const bool bSupportedUnequip =
+                                    (EquippableItem->EquipmentSlot == Vest) ||
+                                    (EquippableItem->EquipmentSlot == Backpack) ||
+                                    (EquippableItem->EquipmentSlot == Armor);
+                                UnequipBtn->SetIsEnabled(bSupportedUnequip);
+                                if (!bSupportedUnequip)
                                 {
                                     UnequipBtn->SetRenderOpacity(0.5f);
                                     UnequipTxt->SetColorAndOpacity(FLinearColor(0.6f, 0.6f, 0.6f, 0.7f));
@@ -326,7 +378,29 @@ void UInventoryItemWidget::OnDropClicked()
         {
             // Спавним предмет перед игроком (для НЕ-рюкзака). Для рюкзака спавн уже сделан выше и сюда мы не попадём.
             FVector ViewLoc; FRotator ViewRot; PC->GetPlayerViewPoint(ViewLoc, ViewRot);
-                            const FVector SpawnLoc = ViewLoc + ViewRot.Vector() * 80.f;
+                            FVector SpawnLoc = ViewLoc + ViewRot.Vector() * 80.f + FVector(0.f, 0.f, 100.f);
+                            // Для бронежилета — спавним от позиции root на меше (иначе может улетать вверх из-за вьюпоинта/камеры)
+                            if (UEquippableItemData* Eq = Cast<UEquippableItemData>(ItemData))
+                            {
+                                if (Eq->EquipmentSlot == Armor)
+                                {
+                                    if (APlayerCharacter* PlayerChar2 = Cast<APlayerCharacter>(PC->GetPawn()))
+                                    {
+                                        if (USkeletalMeshComponent* M = PlayerChar2->GetMesh())
+                                        {
+                                            const FName RootSocket(TEXT("root"));
+                                            if (M->DoesSocketExist(RootSocket))
+                                            {
+                                                SpawnLoc = M->GetSocketLocation(RootSocket) + PlayerChar2->GetActorForwardVector() * 80.f;
+                                            }
+                                            else
+                                            {
+                                                SpawnLoc = PlayerChar2->GetActorLocation() + PlayerChar2->GetActorForwardVector() * 80.f;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
             FActorSpawnParameters S; 
             S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
             

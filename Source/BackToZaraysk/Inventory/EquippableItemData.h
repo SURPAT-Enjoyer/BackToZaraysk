@@ -96,3 +96,28 @@ public:
     UBackpackItemData();
 };
 
+/**
+ * Данные бронежилета 3x3 (без доп. хранилищ)
+ */
+UCLASS(BlueprintType, Blueprintable, meta=(DisplayName="Armor Base Item Data"))
+class BACKTOZARAYSK_API UArmorBaseItemData : public UEquippableItemData
+{
+    GENERATED_BODY()
+
+public:
+    UArmorBaseItemData();
+};
+
+/**
+ * Бронежилет (bege) — на базе ArmorBase, но с моделью SK_Bulletproof_Bege
+ * Размер: 3x3, слот: Бронежилет, без доп. хранилищ
+ */
+UCLASS(BlueprintType, Blueprintable, meta=(DisplayName="Bulletproof Vest Bege Item Data"))
+class BACKTOZARAYSK_API UBulletproofVestBegeItemData : public UEquippableItemData
+{
+    GENERATED_BODY()
+
+public:
+    UBulletproofVestBegeItemData();
+};
+

@@ -4,6 +4,8 @@
 #include "BackToZaraysk/Characters/PlayerCharacter.h"
 #include "BackToZaraysk/Components/EquipmentComponent.h"
 #include "BackToZaraysk/GameData/Items/TacticalVest.h"
+#include "BackToZaraysk/GameData/Items/ArmorBase.h"
+#include "BackToZaraysk/GameData/Items/BulletproofVestBege.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupBackpack.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupParallelepiped.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupCube.h"
@@ -79,6 +81,8 @@ FText UInventoryBlueprintLibrary::GetEquipmentSlotName(EEquipmentSlotType SlotTy
             return FText::FromString(TEXT("Запасное оружие"));
         case Melee:
             return FText::FromString(TEXT("Холодное оружие"));
+        case Armor:
+            return FText::FromString(TEXT("Бронежилет"));
         default:
             return FText::FromString(TEXT("Неизвестно"));
     }
@@ -149,12 +153,18 @@ TSubclassOf<AActor> GetPickupClassForItem_Internal(const UInventoryItemData* Ite
     {
         return APickupCube::StaticClass();
     }
+    // Более специфичные типы должны идти раньше слота (иначе всё Armor будет маппиться в AArmorBase)
+    if (ItemData->IsA(UBulletproofVestBegeItemData::StaticClass()))
+    {
+        return ABulletproofVestBege::StaticClass();
+    }
     if (const UEquippableItemData* Eq = Cast<UEquippableItemData>(ItemData))
     {
         switch (Eq->EquipmentSlot)
         {
             case Vest: return ATacticalVest::StaticClass();
             case Backpack: return APickupBackpack::StaticClass();
+            case Armor: return AArmorBase::StaticClass();
             default: break;
         }
     }
@@ -171,12 +181,17 @@ TSubclassOf<AActor> UInventoryBlueprintLibrary::GetPickupClassForItem(const UInv
     {
         return APickupCube::StaticClass();
     }
+    if (ItemData->IsA(UBulletproofVestBegeItemData::StaticClass()))
+    {
+        return ABulletproofVestBege::StaticClass();
+    }
     if (const UEquippableItemData* Eq = Cast<UEquippableItemData>(ItemData))
     {
         switch (Eq->EquipmentSlot)
         {
             case Vest: return ATacticalVest::StaticClass();
             case Backpack: return APickupBackpack::StaticClass();
+            case Armor: return AArmorBase::StaticClass();
             default: break;
         }
     }

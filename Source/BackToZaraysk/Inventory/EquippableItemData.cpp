@@ -2,6 +2,7 @@
 #include "Engine/Engine.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/Texture2D.h"
 
 UEquippableItemData::UEquippableItemData()
 {
@@ -78,6 +79,93 @@ UBackpackItemData::UBackpackItemData()
         FRotator(0.0f, 0.0f, 0.0f),      // без поворота
         FVector(-12.0f, 0.0f, -4.0f),    // слегка назад и вниз
         FVector(0.28f, 0.16f, 0.36f)     // похожие пропорции на рюкзак
+    );
+}
+
+UArmorBaseItemData::UArmorBaseItemData()
+{
+    DisplayName = FText::FromString(TEXT("Бронежилет"));
+    SizeInCellsX = 3;
+    SizeInCellsY = 3;
+    EquipmentSlot = Armor;
+    bRotatable = false;
+
+    // Бронежилет НЕ имеет дополнительных гридов для хранения
+    bHasAdditionalStorage = false;
+    AdditionalGridSize = FIntPoint(0, 0);
+
+    // Для теста используем статический куб из Engine (видимый на персонаже как плита)
+    FString MeshPath = TEXT("/Engine/BasicShapes/Cube.Cube");
+    EquippedMesh = LoadObject<UStaticMesh>(nullptr, *MeshPath);
+    if (!EquippedMesh || !EquippedMesh->IsValidLowLevel())
+    {
+        UE_LOG(LogTemp, Error, TEXT("UArmorBaseItemData: Failed to load EquippedMesh from path: %s"), *MeshPath);
+        EquippedMesh = nullptr;
+    }
+
+    // Экипировка: аттачим к сокету CenterOfMass (если сокета нет на меше — будет fallback в EquipmentComponent)
+    AttachSocketName = FName(TEXT("CenterOfMass"));
+
+    // Иконка (вместо белого квадрата) — из файла test
+    // Файл: Content/BackToZaraysk/Core/Items/Equipment/test.uasset (и/или test.tga)
+    {
+        const FString IconPath = TEXT("/Game/BackToZaraysk/Core/Items/Equipment/test.test");
+        Icon = LoadObject<UTexture2D>(nullptr, *IconPath);
+        if (!Icon || !Icon->IsValidLowLevel())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("UArmorBaseItemData: Failed to load Icon from path: %s"), *IconPath);
+            Icon = nullptr;
+        }
+    }
+
+    // Позиционирование «плиты» (ориентация "вверх")
+    RelativeTransform = FTransform(
+        FRotator(0.0f, 0.0f, 0.0f),
+        FVector(-2.0f, -4.0f, 4.0f), // +2 вправо (Y)
+        FVector(0.22f, 0.30f, 0.06f)
+    );
+}
+
+UBulletproofVestBegeItemData::UBulletproofVestBegeItemData()
+{
+    // Все свойства идентичны ArmorBase, кроме модели
+    DisplayName = FText::FromString(TEXT("Бронежилет"));
+    SizeInCellsX = 3;
+    SizeInCellsY = 3;
+    EquipmentSlot = Armor;
+    bRotatable = false;
+
+    bHasAdditionalStorage = false;
+    AdditionalGridSize = FIntPoint(0, 0);
+
+    // Модель бронежилета
+    // Файл: Content/BackToZaraysk/Core/Items/Equipment/SK_Bulletproof_Bege.uasset
+    const FString MeshPath = TEXT("/Game/BackToZaraysk/Core/Items/Equipment/SK_Bulletproof_Bege.SK_Bulletproof_Bege");
+    EquippedMesh = LoadObject<USkeletalMesh>(nullptr, *MeshPath);
+    if (!EquippedMesh || !EquippedMesh->IsValidLowLevel())
+    {
+        UE_LOG(LogTemp, Error, TEXT("UBulletproofVestBegeItemData: Failed to load EquippedMesh from path: %s"), *MeshPath);
+        EquippedMesh = nullptr;
+    }
+
+    // Экипировка: аттачим к сокету CenterOfMass (если сокета нет на меше — будет fallback в EquipmentComponent)
+    AttachSocketName = FName(TEXT("CenterOfMass"));
+
+    // Иконка — из файла test (как просили)
+    {
+        const FString IconPath = TEXT("/Game/BackToZaraysk/Core/Items/Equipment/test.test");
+        Icon = LoadObject<UTexture2D>(nullptr, *IconPath);
+        if (!Icon || !Icon->IsValidLowLevel())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("UBulletproofVestBegeItemData: Failed to load Icon from path: %s"), *IconPath);
+            Icon = nullptr;
+        }
+    }
+
+    RelativeTransform = FTransform(
+        FRotator(0.0f, 0.0f, 0.0f),
+        FVector(-2.0f, -4.0f, 4.0f), // +2 вправо (Y)
+        FVector(1.0f, 1.0f, 1.0f)
     );
 }
 

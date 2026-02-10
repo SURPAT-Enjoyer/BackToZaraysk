@@ -244,6 +244,85 @@ bool UInventoryComponent::UnequipItemToInventory(EEquipmentSlotType SlotType, bo
         }
     }
 
+    // Если снимаем бронежилет и рюкзак не экипирован — выбрасываем в мир.
+    // ВАЖНО: UI не отображает BackpackItems (SyncBackpack заглушка), поэтому "в инвентарь" для Armor = в хранилище надетого рюкзака.
+    // Если рюкзака нет или в нём нет места — дроп в мир.
+    bool bArmorPlaceInBackpack = false;
+    int32 ArmorCellX = 0;
+    int32 ArmorCellY = 0;
+    bool bArmorRot = false;
+    if (SlotType == Armor && !bDropToWorld)
+    {
+        if (UEquippableItemData* EquippedBackpack = GetEquippedItem(Backpack))
+        {
+            // Найдём место в гриде рюкзака (contiguous), аналогично TryPickupItem
+            auto GetGridSize = [](const UEquippableItemData* Equip) -> FIntPoint
+            {
+                if (!Equip) return FIntPoint(0,0);
+                const int32 GX = FMath::Max(1, Equip->AdditionalGridSize.X);
+                const int32 GY = FMath::Max(1, Equip->AdditionalGridSize.Y);
+                return FIntPoint(GX, GY);
+            };
+            auto IsRectFree = [&](const UEquippableItemData* Equip, int32 StartX, int32 StartY, int32 SX, int32 SY, const UInventoryItemData* Ignored) -> bool
+            {
+                if (!Equip) return false;
+                const FIntPoint GS = GetGridSize(Equip);
+                if (StartX < 0 || StartY < 0) return false;
+                if (StartX + SX > GS.X || StartY + SY > GS.Y) return false;
+                for (const TPair<TObjectPtr<UInventoryItemData>, FIntPoint>& Pair : Equip->StoredCellByItem)
+                {
+                    UInventoryItemData* Other = Pair.Key;
+                    if (!Other || Other == Ignored) continue;
+                    const FIntPoint OtherCell = Pair.Value;
+                    const bool bOtherRot = Equip->PersistentRotByItem.Contains(Other) ? Equip->PersistentRotByItem[Other] : (Equip->StoredRotByItem.Contains(Other) ? Equip->StoredRotByItem[Other] : false);
+                    const int32 OtherSX = bOtherRot ? FMath::Max(1, Other->SizeInCellsY) : FMath::Max(1, Other->SizeInCellsX);
+                    const int32 OtherSY = bOtherRot ? FMath::Max(1, Other->SizeInCellsX) : FMath::Max(1, Other->SizeInCellsY);
+                    const bool overlapX = !(StartX + SX <= OtherCell.X || OtherCell.X + OtherSX <= StartX);
+                    const bool overlapY = !(StartY + SY <= OtherCell.Y || OtherCell.Y + OtherSY <= StartY);
+                    if (overlapX && overlapY) return false;
+                }
+                return true;
+            };
+            auto FindPlacement = [&](UEquippableItemData* Equip, const UInventoryItemData* It, int32& OutX, int32& OutY, bool& bOutRot) -> bool
+            {
+                if (!Equip || !It) return false;
+                const FIntPoint GS = GetGridSize(Equip);
+                for (int32 y = 0; y < GS.Y; ++y)
+                {
+                    for (int32 x = 0; x < GS.X; ++x)
+                    {
+                        int32 SX = FMath::Max(1, It->SizeInCellsX);
+                        int32 SY = FMath::Max(1, It->SizeInCellsY);
+                        if (IsRectFree(Equip, x, y, SX, SY, It))
+                        {
+                            OutX = x; OutY = y; bOutRot = false; return true;
+                        }
+                        SX = FMath::Max(1, It->SizeInCellsY);
+                        SY = FMath::Max(1, It->SizeInCellsX);
+                        if (IsRectFree(Equip, x, y, SX, SY, It))
+                        {
+                            OutX = x; OutY = y; bOutRot = true; return true;
+                        }
+                    }
+                }
+                return false;
+            };
+
+            if (EquippedBackpack->bHasAdditionalStorage && FindPlacement(EquippedBackpack, Item, ArmorCellX, ArmorCellY, bArmorRot))
+            {
+                bArmorPlaceInBackpack = true;
+            }
+            else
+            {
+                bDropToWorld = true;
+            }
+        }
+        else
+        {
+            bDropToWorld = true;
+        }
+    }
+
     // Снимаем предмет
     if (EquipComp->UnequipItem(SlotType, bDropToWorld))
 	{
@@ -280,6 +359,62 @@ bool UInventoryComponent::UnequipItemToInventory(EEquipmentSlotType SlotType, bo
                         }
                     }
                 }
+            }
+
+            // Особый случай: снимаем бронежилет — кладём в хранилище надетого рюкзака, иначе он "исчезнет" (BackpackItems не отображаются в UI)
+            if (SlotType == Armor)
+            {
+                if (UEquippableItemData* EquippedBackpack = GetEquippedItem(Backpack))
+                {
+                    if (EquippedBackpack->bHasAdditionalStorage && bArmorPlaceInBackpack)
+                    {
+                        RemoveFromAnyStorage(Item);
+                        if (AddToEquipmentStorage(EquippedBackpack, Item))
+                        {
+                            EquippedBackpack->StoredCellByItem.Add(Item, FIntPoint(ArmorCellX, ArmorCellY));
+                            EquippedBackpack->PersistentCellByItem.Add(Item, FIntPoint(ArmorCellX, ArmorCellY));
+                            EquippedBackpack->StoredRotByItem.Add(Item, bArmorRot);
+                            EquippedBackpack->PersistentRotByItem.Add(Item, bArmorRot);
+                            return true;
+                        }
+                    }
+                }
+                // Если по какой-то причине не удалось добавить — выбрасываем в мир вместо "пропажи"
+                if (ACharacter* OwnerChar = Cast<ACharacter>(GetOwner()))
+                {
+                    if (UWorld* World = OwnerChar->GetWorld())
+                    {
+                        FVector ViewLoc; FRotator ViewRot; OwnerChar->GetActorEyesViewPoint(ViewLoc, ViewRot);
+                        FVector SpawnLoc = ViewLoc + ViewRot.Vector() * 80.f + FVector(0.f, 0.f, 100.f);
+                        // Для бронежилета — спавним от позиции root на меше
+                        if (USkeletalMeshComponent* M = OwnerChar->GetMesh())
+                        {
+                            const FName RootSocket(TEXT("root"));
+                            if (M->DoesSocketExist(RootSocket))
+                            {
+                                SpawnLoc = M->GetSocketLocation(RootSocket) + OwnerChar->GetActorForwardVector() * 80.f;
+                            }
+                            else
+                            {
+                                SpawnLoc = OwnerChar->GetActorLocation() + OwnerChar->GetActorForwardVector() * 80.f;
+                            }
+                        }
+                        FActorSpawnParameters S; S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+                        extern TSubclassOf<AActor> GetPickupClassForItem_Internal(const UInventoryItemData* ItemData);
+                        if (TSubclassOf<AActor> DropClass = GetPickupClassForItem_Internal(Item))
+                        {
+                            if (AActor* SpawnedActor = World->SpawnActor<AActor>(DropClass, SpawnLoc, ViewRot, S))
+                            {
+                                if (APickupBase* Spawned = Cast<APickupBase>(SpawnedActor))
+                                {
+                                    Spawned->ItemInstance = Item;
+                                    Spawned->ApplyItemInstanceVisuals();
+                                }
+                            }
+                        }
+                    }
+                }
+                return true;
             }
             // Иначе — возвращаем в список инвентаря (общий бэкпак‑лист)
             RestoreItemToPosition(Item);
@@ -741,7 +876,7 @@ bool UInventoryComponent::SyncWithEquipmentComponent()
 	}
 	
 	// Проверяем все экипированные предметы в EquipmentComponent
-	for (int32 SlotIndex = 0; SlotIndex < 7; ++SlotIndex) // Все возможные слоты
+	for (int32 SlotIndex = 0; SlotIndex < 8; ++SlotIndex) // Все возможные слоты (добавлен Armor)
 	{
 		EEquipmentSlotType SlotType = (EEquipmentSlotType)SlotIndex;
 		if (EquipComp->IsSlotOccupied(SlotType))
@@ -819,6 +954,83 @@ bool UInventoryComponent::TryPickupItem(UInventoryItemData* Item)
     // 1) Если предмет экипируемый и слот свободен — экипируем
     if (UEquippableItemData* Eq = Cast<UEquippableItemData>(Item))
     {
+        // Спец-правило для бронежилета:
+        // - если слот Armor занят: кладём ТОЛЬКО в рюкзак (если он надет), иначе не подбираем
+        if (Eq->EquipmentSlot == Armor && EquipmentSlots.Contains(Armor))
+        {
+            if (UEquippableItemData* EquippedBackpack = GetEquippedItem(Backpack))
+            {
+                int32 CellX = 0, CellY = 0; bool bRot = false;
+                // Воспользуемся той же раскладкой, что и для обычного помещения в рюкзак
+                auto GetGridSize = [](const UEquippableItemData* Equip) -> FIntPoint
+                {
+                    if (!Equip) return FIntPoint(0,0);
+                    const int32 GX = FMath::Max(1, Equip->AdditionalGridSize.X);
+                    const int32 GY = FMath::Max(1, Equip->AdditionalGridSize.Y);
+                    return FIntPoint(GX, GY);
+                };
+                auto IsRectFree = [&](const UEquippableItemData* Equip, int32 StartX, int32 StartY, int32 SX, int32 SY, const UInventoryItemData* Ignored) -> bool
+                {
+                    if (!Equip) return false;
+                    const FIntPoint GS = GetGridSize(Equip);
+                    if (StartX < 0 || StartY < 0) return false;
+                    if (StartX + SX > GS.X || StartY + SY > GS.Y) return false;
+                    for (const TPair<TObjectPtr<UInventoryItemData>, FIntPoint>& Pair : Equip->StoredCellByItem)
+                    {
+                        UInventoryItemData* Other = Pair.Key;
+                        if (!Other || Other == Ignored) continue;
+                        const FIntPoint OtherCell = Pair.Value;
+                        const bool bOtherRot = Equip->PersistentRotByItem.Contains(Other) ? Equip->PersistentRotByItem[Other] : (Equip->StoredRotByItem.Contains(Other) ? Equip->StoredRotByItem[Other] : false);
+                        const int32 OtherSX = bOtherRot ? FMath::Max(1, Other->SizeInCellsY) : FMath::Max(1, Other->SizeInCellsX);
+                        const int32 OtherSY = bOtherRot ? FMath::Max(1, Other->SizeInCellsX) : FMath::Max(1, Other->SizeInCellsY);
+                        const bool overlapX = !(StartX + SX <= OtherCell.X || OtherCell.X + OtherSX <= StartX);
+                        const bool overlapY = !(StartY + SY <= OtherCell.Y || OtherCell.Y + OtherSY <= StartY);
+                        if (overlapX && overlapY) return false;
+                    }
+                    return true;
+                };
+                auto FindPlacement = [&](UEquippableItemData* Equip, const UInventoryItemData* It, int32& OutX, int32& OutY, bool& bOutRot) -> bool
+                {
+                    if (!Equip || !It || !Equip->bHasAdditionalStorage) return false;
+                    const FIntPoint GS = GetGridSize(Equip);
+                    for (int32 y = 0; y < GS.Y; ++y)
+                    {
+                        for (int32 x = 0; x < GS.X; ++x)
+                        {
+                            int32 SX = FMath::Max(1, It->SizeInCellsX);
+                            int32 SY = FMath::Max(1, It->SizeInCellsY);
+                            if (IsRectFree(Equip, x, y, SX, SY, It))
+                            {
+                                OutX = x; OutY = y; bOutRot = false; return true;
+                            }
+                            SX = FMath::Max(1, It->SizeInCellsY);
+                            SY = FMath::Max(1, It->SizeInCellsX);
+                            if (IsRectFree(Equip, x, y, SX, SY, It))
+                            {
+                                OutX = x; OutY = y; bOutRot = true; return true;
+                            }
+                        }
+                    }
+                    return false;
+                };
+
+                if (FindPlacement(EquippedBackpack, Item, CellX, CellY, bRot))
+                {
+                    RemoveFromAnyStorage(Item);
+                    if (AddToEquipmentStorage(EquippedBackpack, Item))
+                    {
+                        EquippedBackpack->StoredCellByItem.Add(Item, FIntPoint(CellX, CellY));
+                        EquippedBackpack->PersistentCellByItem.Add(Item, FIntPoint(CellX, CellY));
+                        EquippedBackpack->StoredRotByItem.Add(Item, bRot);
+                        EquippedBackpack->PersistentRotByItem.Add(Item, bRot);
+                        return true;
+                    }
+                }
+            }
+            if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Yellow, TEXT("⚠️ Armor pickup failed: Armor slot occupied and no backpack space"));
+            return false;
+        }
+
         if (!EquipmentSlots.Contains(Eq->EquipmentSlot))
         {
             BackpackItems.Add(Item);
