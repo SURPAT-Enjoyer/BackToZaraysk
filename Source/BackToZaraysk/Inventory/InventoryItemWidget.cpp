@@ -214,6 +214,7 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
                         VBox->AddChildToVerticalBox(UnequipBtn);
                                 // Разрешаем "Снять" для слотов, которые реально поддерживаем в UI/логике
                                 const bool bSupportedUnequip =
+                                    (EquippableItem->EquipmentSlot == Helmet) ||
                                     (EquippableItem->EquipmentSlot == Vest) ||
                                     (EquippableItem->EquipmentSlot == Backpack) ||
                                     (EquippableItem->EquipmentSlot == Armor);
@@ -358,6 +359,13 @@ void UInventoryItemWidget::OnDropClicked()
                     }
                 }
                 return;
+            }
+
+            // Fallback: если по какой-то причине снять+выбросить не удалось (несинхрон между bIsEquipped и EquipmentSlots),
+            // принудительно удаляем предмет из слота/хранилищ и спавним его в мир вручную, чтобы он НЕ оставался в слоте.
+            if (InvComp->RemoveFromAnyStorage(ItemData))
+            {
+                bItemRemoved = true;
             }
         }
         else

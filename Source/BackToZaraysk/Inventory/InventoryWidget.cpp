@@ -417,9 +417,32 @@ void UInventoryWidget::NativeOnInitialized()
             const float BoxHeight = 80.f;
             const float Step = 120.f; // равные интервалы по вертикали
 
-            // Голова: на уровне "лицо", по центру силуэта (справа от "лицо")
+            // Голова (интерактивный слот для шлема): на уровне "лицо", по центру силуэта
             const float HeadY = 150.f;
-            AddEquipSlot(TEXT("голова"), FVector2D(SilCenterX - SlotHalfWidth, HeadY)); y+=110.f;
+            {
+                UTextBlock* HelmetLabel = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+                HelmetLabel->SetText(FText::FromString(TEXT("голова")));
+                HelmetLabel->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+
+                HelmetSlotRef = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("HelmetSlot"));
+                HelmetSlotRef->SetBrushColor(FLinearColor(1.f,1.f,1.f,0.05f));
+
+                const FVector2D HelmetPos = FVector2D(SilCenterX - SlotHalfWidth, HeadY);
+                if (UCanvasPanelSlot* HelmetLabelSlot = Canvas->AddChildToCanvas(HelmetLabel))
+                {
+                    HelmetLabelSlot->SetAnchors(FAnchors(0.f, 0.f, 0.f, 0.f));
+                    HelmetLabelSlot->SetAlignment(FVector2D(0.f, 0.f));
+                    HelmetLabelSlot->SetPosition(HelmetPos);
+                    HelmetLabelSlot->SetSize(FVector2D(120.f, 20.f));
+                }
+                if (UCanvasPanelSlot* HelmetSlotCanvas = Canvas->AddChildToCanvas(HelmetSlotRef))
+                {
+                    HelmetSlotCanvas->SetAnchors(FAnchors(0.f, 0.f, 0.f, 0.f));
+                    HelmetSlotCanvas->SetAlignment(FVector2D(0.f, 0.f));
+                    HelmetSlotCanvas->SetPosition(HelmetPos + FVector2D(0.f, 20.f));
+                    HelmetSlotCanvas->SetSize(FVector2D(120.f, 80.f));
+                }
+            }
 
             // Обувь остаётся внизу силуэта (фиксированная позиция)
             const float ShoeY = SilTop + SilHeight - (LabelHeight + BoxHeight); // 720
@@ -763,12 +786,30 @@ void UInventoryWidget::UpdateEquipmentSlots()
         ArmorSlotRef->ClearChildren();
         ArmorItemWidgetRef = nullptr;
     }
+    if (HelmetSlotRef && HelmetItemWidgetRef)
+    {
+        HelmetSlotRef->ClearChildren();
+        HelmetItemWidgetRef = nullptr;
+    }
 
     // Получаем экипированный рюкзак и отображаем его в слоте
     if (APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(GetOwningPlayerPawn()))
     {
         if (UInventoryComponent* InvComp = PlayerChar->InventoryComponent)
         {
+            // Шлем
+            if (UEquippableItemData* EquippedHelmet = InvComp->GetEquippedItem(Helmet))
+            {
+                if (HelmetSlotRef)
+                {
+                    UInventoryItemWidget* ItemW = WidgetTree->ConstructWidget<UInventoryItemWidget>(UInventoryItemWidget::StaticClass());
+                    ItemW->bIsStaticEquipmentSlot = true;
+                    ItemW->Init(EquippedHelmet, EquippedHelmet->Icon, EquipmentSlotSize);
+                    HelmetSlotRef->SetContent(ItemW);
+                    HelmetItemWidgetRef = ItemW;
+                }
+            }
+
             // Бронежилет
             if (UEquippableItemData* EquippedArmor = InvComp->GetEquippedItem(Armor))
             {
@@ -1410,6 +1451,51 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
         return false;
     }
 
+    if (HelmetSlotRef && HelmetSlotRef->GetCachedGeometry().IsUnderLocation(ScreenPos))
+    {
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, TEXT("🎯 Drop detected on Helmet Slot"));
+        }
+
+        if (UEquippableItemData* HelmetItem = Cast<UEquippableItemData>(DraggedWidget->ItemData))
+        {
+            if (HelmetItem->EquipmentSlot == Helmet)
+            {
+                if (APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(GetOwningPlayerPawn()))
+                {
+                    if (UInventoryComponent* InvComp = PlayerChar->InventoryComponent)
+                    {
+                        // Если слот головы занят — снимаем текущий шлем (в инвентарь)
+                        if (InvComp->GetEquippedItem(Helmet) != nullptr)
+                        {
+                            const bool bUnequippedOld = InvComp->UnequipItemToInventory(Helmet, false);
+                            if (!bUnequippedOld)
+                            {
+                                if (GEngine) { GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("❌ Failed to unequip current helmet before equipping new one")); }
+                                return false;
+                            }
+                        }
+
+                        InvComp->RemoveFromAnyStorage(DraggedWidget->ItemData);
+                        InvComp->BackpackItems.AddUnique(HelmetItem);
+
+                        if (InvComp->EquipItemFromInventory(HelmetItem))
+                        {
+                            DraggedWidget->SetTint(FLinearColor(1.f, 1.f, 1.f, 1.f));
+                            UpdateEquipmentSlots();
+                            UpdateBackpackStorageGrid();
+                            UpdateVestGrid();
+                            RefreshInventoryUI();
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     if (ArmorSlotRef && ArmorSlotRef->GetCachedGeometry().IsUnderLocation(ScreenPos))
     {
         if (GEngine)
@@ -1987,6 +2073,12 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
                 UpdateEquipmentSlots();
                 RefreshInventoryUI();
             }
+            else if (EquippedItem->EquipmentSlot == Helmet)
+            {
+                // Шлем не имеет гридов — просто обновляем слоты/интерфейс
+                UpdateEquipmentSlots();
+                RefreshInventoryUI();
+            }
         }
     }
     
@@ -2013,6 +2105,20 @@ bool UInventoryWidget::NativeOnDragOver(const FGeometry& InGeometry, const FDrag
             if (UEquippableItemData* VestItem = Cast<UEquippableItemData>(DraggedWidget->ItemData))
             {
                 if (VestItem->EquipmentSlot == Vest)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    if (HelmetSlotRef && HelmetSlotRef->GetCachedGeometry().IsUnderLocation(ScreenPos))
+    {
+        if (UInventoryItemWidget* DraggedWidget = Cast<UInventoryItemWidget>(InOperation ? InOperation->Payload : nullptr))
+        {
+            if (UEquippableItemData* HelmetItem = Cast<UEquippableItemData>(DraggedWidget->ItemData))
+            {
+                if (HelmetItem->EquipmentSlot == Helmet)
                 {
                     return true;
                 }

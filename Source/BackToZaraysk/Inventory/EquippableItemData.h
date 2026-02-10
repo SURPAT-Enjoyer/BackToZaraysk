@@ -73,6 +73,30 @@ public:
 };
 
 /**
+ * Данные базового шлема (по умолчанию 1x1, слот: Шлем)
+ */
+UCLASS(BlueprintType, Blueprintable, meta=(DisplayName="Helmet Base Item Data"))
+class BACKTOZARAYSK_API UHelmetBaseItemData : public UEquippableItemData
+{
+    GENERATED_BODY()
+
+public:
+    UHelmetBaseItemData();
+};
+
+/**
+ * Данные кепки Cap01 (на базе HelmetBase)
+ */
+UCLASS(BlueprintType, Blueprintable, meta=(DisplayName="Cap01 Item Data"))
+class BACKTOZARAYSK_API UCap01ItemData : public UHelmetBaseItemData
+{
+    GENERATED_BODY()
+
+public:
+    UCap01ItemData();
+};
+
+/**
  * Данные тактического жилета 3x3
  */
 UCLASS(BlueprintType, Blueprintable, meta=(DisplayName="Tactical Vest Item Data"))

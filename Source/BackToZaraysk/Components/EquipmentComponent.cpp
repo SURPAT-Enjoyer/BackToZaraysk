@@ -5,6 +5,7 @@
 #include "Engine/StaticMesh.h"
 #include "GameFramework/Character.h"
 #include "Engine/SkeletalMesh.h"
+#include "Components/CapsuleComponent.h"
 // For backpack pickup spawn on drop
 #include "BackToZaraysk/GameData/Items/Test/PickupBackpack.h"
 // For generic pickup mapping
@@ -13,7 +14,8 @@
 
 UEquipmentComponent::UEquipmentComponent()
 {
-    PrimaryComponentTick.bCanEverTick = false;
+    PrimaryComponentTick.bCanEverTick = true;
+    SetComponentTickEnabled(false); // включаем только когда нужно (Helmet follow)
 }
 
 void UEquipmentComponent::BeginPlay()
@@ -29,6 +31,43 @@ void UEquipmentComponent::BeginPlay()
     if (!CharacterMesh)
     {
         UE_LOG(LogTemp, Error, TEXT("EquipmentComponent: Character mesh not found!"));
+    }
+}
+
+void UEquipmentComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+{
+    Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+    if (BoneFollowBySlot.Num() == 0 || !CharacterMesh)
+    {
+        if (IsComponentTickEnabled())
+        {
+            SetComponentTickEnabled(false);
+        }
+        return;
+    }
+
+    // Ручное следование сокетам (нужно, когда меш персонажа скрыт и аттач к нему визуально "не работает")
+    for (const TPair<TEnumAsByte<EEquipmentSlotType>, FBoneFollowEntry>& Pair : BoneFollowBySlot)
+    {
+        const EEquipmentSlotType Slot = Pair.Key;
+        const FBoneFollowEntry& Entry = Pair.Value;
+
+        USceneComponent* const* CompPtr = EquipmentMeshComponents.Find(Slot);
+        USceneComponent* Comp = CompPtr ? *CompPtr : nullptr;
+        if (!Comp) continue;
+
+        const FName Socket = Entry.SocketName;
+        if (Socket == NAME_None) continue;
+
+        FTransform SocketWorld = CharacterMesh->GetComponentTransform();
+        if (CharacterMesh->DoesSocketExist(Socket))
+        {
+            SocketWorld = CharacterMesh->GetSocketTransform(Socket, RTS_World);
+        }
+
+        const FTransform DesiredWorld = Entry.RelativeToSocket * SocketWorld;
+        Comp->SetWorldTransform(DesiredWorld, false, nullptr, ETeleportType::TeleportPhysics);
     }
 }
 
@@ -182,6 +221,22 @@ bool UEquipmentComponent::UnequipItem(EEquipmentSlotType SlotType, bool bDropToW
                     FVector SpawnLoc = ViewLoc + ViewRot.Vector() * 80.f + FVector(0.f, 0.f, 100.f);
                     // Для бронежилета — спавним от позиции root на меше (иначе может улетать вверх из-за вьюпоинта/камеры)
                     if (SlotType == Armor)
+                    {
+                        if (USkeletalMeshComponent* M = Character->GetMesh())
+                        {
+                            const FName RootSocket(TEXT("root"));
+                            if (M->DoesSocketExist(RootSocket))
+                            {
+                                SpawnLoc = M->GetSocketLocation(RootSocket) + Character->GetActorForwardVector() * 80.f;
+                            }
+                            else
+                            {
+                                SpawnLoc = Character->GetActorLocation() + Character->GetActorForwardVector() * 80.f;
+                            }
+                        }
+                    }
+                    // Для головных уборов — также спавним от root, чтобы дроп был стабильным (без зависимости от камеры)
+                    else if (SlotType == Helmet)
                     {
                         if (USkeletalMeshComponent* M = Character->GetMesh())
                         {
@@ -375,40 +430,51 @@ USceneComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquipmentSlo
         GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, TEXT("🔧 Mesh component registered"));
     }
     
-    // Прикрепляем к персонажу
-    if (ItemData->AttachSocketName != NAME_None && CharacterMesh->DoesSocketExist(ItemData->AttachSocketName))
+    // Прикрепляем к персонажу.
+    // ВАЖНО: для Helmet используем ручное следование сокету, чтобы визуал работал даже если CharacterMesh скрыт (OwnerNoSee/Visibility).
+    if (SlotType == Helmet)
     {
-        // Для скелетных мешей используем SnapToTarget для правильного прикрепления к сокету
-        Created->AttachToComponent(CharacterMesh, 
-            FAttachmentTransformRules::SnapToTargetNotIncludingScale, 
-            ItemData->AttachSocketName);
-        
+        USceneComponent* Root = GetOwner() ? GetOwner()->GetRootComponent() : nullptr;
+        if (!Root)
+        {
+            Root = CharacterMesh;
+        }
+
+        // Чтобы сокеты считались, даже если меш скрыт
+        CharacterMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+
+        // Ставим в правильное место в мире и аттачим к Root с KeepWorld
+        FTransform SocketWorld = CharacterMesh->GetComponentTransform();
+        const FName SocketName = (ItemData->AttachSocketName != NAME_None) ? ItemData->AttachSocketName : FName(TEXT("head"));
+        if (CharacterMesh->DoesSocketExist(SocketName))
+        {
+            SocketWorld = CharacterMesh->GetSocketTransform(SocketName, RTS_World);
+        }
+        const FTransform DesiredWorld = ItemData->RelativeTransform * SocketWorld;
+        Created->AttachToComponent(Root, FAttachmentTransformRules::KeepWorldTransform);
+        Created->SetWorldTransform(DesiredWorld);
+
+        BoneFollowBySlot.Add(SlotType, FBoneFollowEntry{SocketName, ItemData->RelativeTransform});
+        SetComponentTickEnabled(true);
+
         if (GEngine)
         {
-            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
-                FString::Printf(TEXT("🔧 Attached to socket: %s (skeletal attachment)"), 
-                    *ItemData->AttachSocketName.ToString()));
+            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green,
+                FString::Printf(TEXT("🧢 Helmet visual: root-attached + bone-follow socket=%s"), *SocketName.ToString()));
         }
     }
     else
     {
-        // Прикрепляем к корню меша (к персонажу)
-        Created->AttachToComponent(CharacterMesh, 
-            FAttachmentTransformRules::SnapToTargetNotIncludingScale);
-        
-        if (GEngine)
+        if (ItemData->AttachSocketName != NAME_None && CharacterMesh->DoesSocketExist(ItemData->AttachSocketName))
         {
-            if (ItemData->AttachSocketName == NAME_None)
-            {
-                GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
-                    TEXT("🔧 Attached to character root (no socket)"));
-            }
-            else
-            {
-                GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, 
-                    FString::Printf(TEXT("⚠️ Socket '%s' not found, attached to root"), 
-                        *ItemData->AttachSocketName.ToString()));
-            }
+            Created->AttachToComponent(CharacterMesh,
+                FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+                ItemData->AttachSocketName);
+        }
+        else
+        {
+            Created->AttachToComponent(CharacterMesh,
+                FAttachmentTransformRules::SnapToTargetNotIncludingScale);
         }
     }
     
@@ -426,7 +492,11 @@ USceneComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquipmentSlo
     // Применяем относительный трансформ
     if (USceneComponent* C = Created)
     {
-        C->SetRelativeTransform(ItemData->RelativeTransform);
+        // Для Helmet мы уже выставили WorldTransform относительно сокета, а компонент может быть не на CharacterMesh.
+        if (SlotType != Helmet)
+        {
+            C->SetRelativeTransform(ItemData->RelativeTransform);
+        }
     }
     
     if (GEngine)
@@ -442,9 +512,15 @@ USceneComponent* UEquipmentComponent::CreateEquipmentMeshComponent(EEquipmentSlo
     // Отключаем коллизию для экипированного предмета
     if (UPrimitiveComponent* Prim = Cast<UPrimitiveComponent>(Created))
     {
+        // Копируем флаги видимости, чтобы не попадать в "не видно вообще" из-за OwnerNoSee/OnlyOwnerSee на CharacterMesh
+        if (CharacterMesh)
+        {
+            Prim->SetOnlyOwnerSee(CharacterMesh->bOnlyOwnerSee);
+            Prim->SetOwnerNoSee(CharacterMesh->bOwnerNoSee);
+        }
         Prim->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-        Prim->SetVisibility(true);
-        Prim->SetHiddenInGame(false);
+        Prim->SetVisibility(true, true);
+        Prim->SetHiddenInGame(false, true);
         Prim->UpdateBounds();
         Prim->MarkRenderTransformDirty();
     }
@@ -494,6 +570,12 @@ void UEquipmentComponent::RemoveEquipmentMeshComponent(EEquipmentSlotType SlotTy
         {
             MeshComp->DestroyComponent();
         }
+    }
+
+    BoneFollowBySlot.Remove(SlotType);
+    if (BoneFollowBySlot.Num() == 0)
+    {
+        SetComponentTickEnabled(false);
     }
 }
 

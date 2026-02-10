@@ -323,6 +323,206 @@ bool UInventoryComponent::UnequipItemToInventory(EEquipmentSlotType SlotType, bo
         }
     }
 
+    // Если снимаем шлем: пытаемся положить в хранилища по приоритету:
+    // 1) рюкзак (если надет и есть место)
+    // 2) разгрузочный жилет (если надет и есть место)
+    // 3) карманы 1x1
+    // иначе — выбрасываем в мир.
+    enum class EHelmetUnequipTarget : uint8 { None, Backpack, Vest, Pocket };
+    EHelmetUnequipTarget HelmetTarget = EHelmetUnequipTarget::None;
+    int32 HelmetCellX = 0;
+    int32 HelmetCellY = 0;
+    bool bHelmetRot = false;
+    int32 HelmetVestGridIdx = INDEX_NONE;
+    FIntPoint HelmetVestLocalCell(0, 0);
+    int32 HelmetPocketIndex = 0;
+
+    if (SlotType == Helmet && !bDropToWorld)
+    {
+        // === 1) Backpack storage ===
+        if (UEquippableItemData* EquippedBackpack = GetEquippedItem(Backpack))
+        {
+            if (EquippedBackpack->bHasAdditionalStorage)
+            {
+                auto GetGridSize = [](const UEquippableItemData* Equip) -> FIntPoint
+                {
+                    if (!Equip) return FIntPoint(0,0);
+                    const int32 GX = FMath::Max(1, Equip->AdditionalGridSize.X);
+                    const int32 GY = FMath::Max(1, Equip->AdditionalGridSize.Y);
+                    return FIntPoint(GX, GY);
+                };
+                auto IsRectFree = [&](const UEquippableItemData* Equip, int32 StartX, int32 StartY, int32 SX, int32 SY, const UInventoryItemData* Ignored) -> bool
+                {
+                    if (!Equip) return false;
+                    const FIntPoint GS = GetGridSize(Equip);
+                    if (StartX < 0 || StartY < 0) return false;
+                    if (StartX + SX > GS.X || StartY + SY > GS.Y) return false;
+                    for (const TPair<TObjectPtr<UInventoryItemData>, FIntPoint>& Pair : Equip->StoredCellByItem)
+                    {
+                        UInventoryItemData* Other = Pair.Key;
+                        if (!Other || Other == Ignored) continue;
+                        const FIntPoint OtherCell = Pair.Value;
+                        const bool bOtherRot = Equip->PersistentRotByItem.Contains(Other) ? Equip->PersistentRotByItem[Other] : (Equip->StoredRotByItem.Contains(Other) ? Equip->StoredRotByItem[Other] : false);
+                        const int32 OtherSX = bOtherRot ? FMath::Max(1, Other->SizeInCellsY) : FMath::Max(1, Other->SizeInCellsX);
+                        const int32 OtherSY = bOtherRot ? FMath::Max(1, Other->SizeInCellsX) : FMath::Max(1, Other->SizeInCellsY);
+                        const bool overlapX = !(StartX + SX <= OtherCell.X || OtherCell.X + OtherSX <= StartX);
+                        const bool overlapY = !(StartY + SY <= OtherCell.Y || OtherCell.Y + OtherSY <= StartY);
+                        if (overlapX && overlapY) return false;
+                    }
+                    return true;
+                };
+                auto FindPlacement = [&](UEquippableItemData* Equip, const UInventoryItemData* It, int32& OutX, int32& OutY, bool& bOutRot) -> bool
+                {
+                    if (!Equip || !It) return false;
+                    const FIntPoint GS = GetGridSize(Equip);
+                    for (int32 y = 0; y < GS.Y; ++y)
+                    {
+                        for (int32 x = 0; x < GS.X; ++x)
+                        {
+                            int32 SX = FMath::Max(1, It->SizeInCellsX);
+                            int32 SY = FMath::Max(1, It->SizeInCellsY);
+                            if (IsRectFree(Equip, x, y, SX, SY, It))
+                            {
+                                OutX = x; OutY = y; bOutRot = false; return true;
+                            }
+                            SX = FMath::Max(1, It->SizeInCellsY);
+                            SY = FMath::Max(1, It->SizeInCellsX);
+                            if (IsRectFree(Equip, x, y, SX, SY, It))
+                            {
+                                OutX = x; OutY = y; bOutRot = true; return true;
+                            }
+                        }
+                    }
+                    return false;
+                };
+
+                if (FindPlacement(EquippedBackpack, Item, HelmetCellX, HelmetCellY, bHelmetRot))
+                {
+                    HelmetTarget = EHelmetUnequipTarget::Backpack;
+                }
+            }
+        }
+
+        // === 2) Vest storage (6 mini-grids) ===
+        if (HelmetTarget == EHelmetUnequipTarget::None)
+        {
+            if (UEquippableItemData* EquippedVest = GetEquippedItem(Vest))
+            {
+                if (EquippedVest->bHasAdditionalStorage)
+                {
+                    auto GetVestPlacement = [&](const UEquippableItemData* VestData, const UInventoryItemData* It, int32& OutGridIdx, FIntPoint& OutLocalCell) -> bool
+                    {
+                        if (!VestData || !It) return false;
+                        const int32* GridPtr = VestData->PersistentGridByItem.Find(It);
+                        if (!GridPtr) GridPtr = VestData->StoredGridByItem.Find(It);
+                        const FIntPoint* CellPtr = VestData->PersistentCellByItem.Find(It);
+                        if (!CellPtr) CellPtr = VestData->StoredCellByItem.Find(It);
+                        if (!CellPtr && !GridPtr) return false;
+                        if (GridPtr)
+                        {
+                            OutGridIdx = *GridPtr;
+                            OutLocalCell = CellPtr ? *CellPtr : FIntPoint(0,0);
+                            return true;
+                        }
+                        // миграция старого формата: StoredCellByItem = global (X=grid, Y=row)
+                        OutGridIdx = CellPtr->X;
+                        OutLocalCell = FIntPoint(0, CellPtr->Y);
+                        return true;
+                    };
+                    auto GetVestRotation = [&](const UEquippableItemData* VestData, const UInventoryItemData* It, bool& bOutRot) -> bool
+                    {
+                        bOutRot = false;
+                        if (!VestData || !It) return false;
+                        if (const bool* R = VestData->PersistentRotByItem.Find(It)) { bOutRot = *R; return true; }
+                        if (const bool* R2 = VestData->StoredRotByItem.Find(It)) { bOutRot = *R2; return true; }
+                        return false;
+                    };
+                    auto VestMiniGridSizeByIndex = [](int32 GridIdx) -> FIntPoint
+                    {
+                        if (GridIdx == 2 || GridIdx == 3) return FIntPoint(1, 2);
+                        return FIntPoint(1, 1);
+                    };
+                    auto IsAreaFreeInVestMiniGrid = [&](const UEquippableItemData* VestData, int32 GridIdx, int32 StartX, int32 StartY, int32 SX, int32 SY, const UInventoryItemData* Ignored) -> bool
+                    {
+                        if (!VestData) return false;
+                        if (GridIdx < 0 || GridIdx > 5) return false;
+                        const FIntPoint GS = VestMiniGridSizeByIndex(GridIdx);
+                        if (StartX < 0 || StartY < 0) return false;
+                        if (StartX + SX > GS.X || StartY + SY > GS.Y) return false;
+
+                        for (const TPair<TObjectPtr<UInventoryItemData>, FIntPoint>& Pair : VestData->StoredCellByItem)
+                        {
+                            UInventoryItemData* Other = Pair.Key;
+                            if (!Other || Other == Ignored) continue;
+                            int32 OtherGrid = INDEX_NONE;
+                            FIntPoint OtherCell(0,0);
+                            if (!GetVestPlacement(VestData, Other, OtherGrid, OtherCell)) continue;
+                            if (OtherGrid != GridIdx) continue;
+                            bool bOtherRot = false;
+                            GetVestRotation(VestData, Other, bOtherRot);
+                            const int32 OtherSX = bOtherRot ? FMath::Max(1, Other->SizeInCellsY) : FMath::Max(1, Other->SizeInCellsX);
+                            const int32 OtherSY = bOtherRot ? FMath::Max(1, Other->SizeInCellsX) : FMath::Max(1, Other->SizeInCellsY);
+                            const bool overlapX = !(StartX + SX <= OtherCell.X || OtherCell.X + OtherSX <= StartX);
+                            const bool overlapY = !(StartY + SY <= OtherCell.Y || OtherCell.Y + OtherSY <= StartY);
+                            if (overlapX && overlapY) return false;
+                        }
+                        return true;
+                    };
+
+                    // Перебираем мини-гриды 0..5, кладём только предметы с шириной 1 (после возможного поворота)
+                    const int32 BaseW = FMath::Max(1, Item->SizeInCellsX);
+                    const int32 BaseH = FMath::Max(1, Item->SizeInCellsY);
+                    for (int32 grid = 0; grid < 6; ++grid)
+                    {
+                        const FIntPoint GS = VestMiniGridSizeByIndex(grid);
+                        struct { int32 W; int32 H; bool bRot; } Candidates[2] = {
+                            { BaseW, BaseH, false },
+                            { BaseH, BaseW, true }
+                        };
+                        for (const auto& C : Candidates)
+                        {
+                            if (C.W != 1) continue;
+                            if (C.H > GS.Y) continue;
+                            const int32 startYMax = GS.Y - C.H;
+                            for (int32 y = 0; y <= startYMax; ++y)
+                            {
+                                if (IsAreaFreeInVestMiniGrid(EquippedVest, grid, 0, y, C.W, C.H, Item))
+                                {
+                                    HelmetTarget = EHelmetUnequipTarget::Vest;
+                                    HelmetVestGridIdx = grid;
+                                    HelmetVestLocalCell = FIntPoint(0, y);
+                                    bHelmetRot = C.bRot;
+                                    break;
+                                }
+                            }
+                            if (HelmetTarget == EHelmetUnequipTarget::Vest) break;
+                        }
+                        if (HelmetTarget == EHelmetUnequipTarget::Vest) break;
+                    }
+                }
+            }
+        }
+
+        // === 3) Pockets ===
+        if (HelmetTarget == EHelmetUnequipTarget::None)
+        {
+            // Карманы только 1x1
+            if (Item->SizeInCellsX == 1 && Item->SizeInCellsY == 1)
+            {
+                if (Pocket1Items.Num() < 1) { HelmetTarget = EHelmetUnequipTarget::Pocket; HelmetPocketIndex = 1; }
+                else if (Pocket2Items.Num() < 1) { HelmetTarget = EHelmetUnequipTarget::Pocket; HelmetPocketIndex = 2; }
+                else if (Pocket3Items.Num() < 1) { HelmetTarget = EHelmetUnequipTarget::Pocket; HelmetPocketIndex = 3; }
+                else if (Pocket4Items.Num() < 1) { HelmetTarget = EHelmetUnequipTarget::Pocket; HelmetPocketIndex = 4; }
+            }
+        }
+
+        // Если никуда не помещается — выбрасываем в мир
+        if (HelmetTarget == EHelmetUnequipTarget::None)
+        {
+            bDropToWorld = true;
+        }
+    }
+
     // Снимаем предмет
     if (EquipComp->UnequipItem(SlotType, bDropToWorld))
 	{
@@ -409,6 +609,87 @@ bool UInventoryComponent::UnequipItemToInventory(EEquipmentSlotType SlotType, bo
                                 {
                                     Spawned->ItemInstance = Item;
                                     Spawned->ApplyItemInstanceVisuals();
+                                }
+                            }
+                        }
+                    }
+                }
+                return true;
+            }
+
+            // Особый случай: снимаем шлем — кладём в рюкзак/жилет/карманы по приоритету, иначе (если бDropToWorld=true) уже выбросили.
+            if (SlotType == Helmet)
+            {
+                // 1) В рюкзак
+                if (HelmetTarget == EHelmetUnequipTarget::Backpack)
+                {
+                    if (UEquippableItemData* EquippedBackpack = GetEquippedItem(Backpack))
+                    {
+                        RemoveFromAnyStorage(Item);
+                        if (AddToEquipmentStorage(EquippedBackpack, Item))
+                        {
+                            EquippedBackpack->StoredCellByItem.Add(Item, FIntPoint(HelmetCellX, HelmetCellY));
+                            EquippedBackpack->PersistentCellByItem.Add(Item, FIntPoint(HelmetCellX, HelmetCellY));
+                            EquippedBackpack->StoredRotByItem.Add(Item, bHelmetRot);
+                            EquippedBackpack->PersistentRotByItem.Add(Item, bHelmetRot);
+                            return true;
+                        }
+                    }
+                }
+                // 2) В жилет (мини-грид)
+                if (HelmetTarget == EHelmetUnequipTarget::Vest)
+                {
+                    if (UEquippableItemData* EquippedVest = GetEquippedItem(Vest))
+                    {
+                        RemoveFromAnyStorage(Item);
+                        if (AddToEquipmentStorage(EquippedVest, Item))
+                        {
+                            EquippedVest->StoredGridByItem.Add(Item, HelmetVestGridIdx);
+                            EquippedVest->PersistentGridByItem.Add(Item, HelmetVestGridIdx);
+                            EquippedVest->StoredCellByItem.Add(Item, HelmetVestLocalCell);
+                            EquippedVest->PersistentCellByItem.Add(Item, HelmetVestLocalCell);
+                            EquippedVest->StoredRotByItem.Add(Item, bHelmetRot);
+                            EquippedVest->PersistentRotByItem.Add(Item, bHelmetRot);
+                            return true;
+                        }
+                    }
+                }
+                // 3) В карман
+                if (HelmetTarget == EHelmetUnequipTarget::Pocket && HelmetPocketIndex >= 1 && HelmetPocketIndex <= 4)
+                {
+                    // Удаляем из всех мест и кладём в первый свободный карман
+                    RemoveFromAnyStorage(Item);
+                    switch (HelmetPocketIndex)
+                    {
+                        case 1: return AddToGridLike(Pocket1Items, FIntPoint(1,1), Item);
+                        case 2: return AddToGridLike(Pocket2Items, FIntPoint(1,1), Item);
+                        case 3: return AddToGridLike(Pocket3Items, FIntPoint(1,1), Item);
+                        case 4: return AddToGridLike(Pocket4Items, FIntPoint(1,1), Item);
+                        default: break;
+                    }
+                }
+                // Если мы дошли сюда — что-то пошло не так (потеряли место после расчёта). Тогда выбрасываем в мир как фолбэк.
+                if (ACharacter* OwnerChar = Cast<ACharacter>(GetOwner()))
+                {
+                    if (UWorld* World = OwnerChar->GetWorld())
+                    {
+                        FVector ViewLoc; FRotator ViewRot; OwnerChar->GetActorEyesViewPoint(ViewLoc, ViewRot);
+                        const FVector SpawnLoc = OwnerChar->GetActorLocation() + OwnerChar->GetActorForwardVector() * 80.f;
+                        FActorSpawnParameters S; S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+                        extern TSubclassOf<AActor> GetPickupClassForItem_Internal(const UInventoryItemData* ItemData);
+                        if (TSubclassOf<AActor> DropClass = GetPickupClassForItem_Internal(Item))
+                        {
+                            if (AActor* SpawnedActor = World->SpawnActor<AActor>(DropClass, SpawnLoc, ViewRot, S))
+                            {
+                                if (APickupBase* Spawned = Cast<APickupBase>(SpawnedActor))
+                                {
+                                    Spawned->ItemInstance = Item;
+                                    Spawned->ApplyItemInstanceVisuals();
+                                }
+                                else if (AEquipmentBase* AsEquip = Cast<AEquipmentBase>(SpawnedActor))
+                                {
+                                    AsEquip->ItemInstance = Item;
+                                    AsEquip->ApplyItemInstanceVisuals();
                                 }
                             }
                         }
@@ -1203,6 +1484,12 @@ bool UInventoryComponent::MoveItemToVest(UInventoryItemData* Item)
 bool UInventoryComponent::MoveItemToPocket(int32 PocketIndex, UInventoryItemData* Item)
 {
     if (!Item) return false;
+
+    // ВАЖНО: если предмет был экипирован (лежит в слоте), сперва снимаем его,
+    // иначе он останется в слоте и продублируется в кармане.
+    // RemoveFromAnyStorage() умеет снимать экипированные предметы без выбрасывания в мир.
+    RemoveFromAnyStorage(Item);
+
     TArray<TObjectPtr<UInventoryItemData>>* Target = nullptr;
     switch (PocketIndex)
     {

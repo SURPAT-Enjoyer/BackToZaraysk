@@ -41,6 +41,7 @@ Plugins/**/Saved/
 .vs/
 .vscode/
 .idea/
+.cursor/
 
 *.suo
 *.user
@@ -78,6 +79,9 @@ $RECYCLE.BIN/
 *.bak
 *.backup
 *.swp
+
+# Unreal per-user editor settings (do not commit)
+Config/DefaultEditorPerProjectUserSettings.ini
 
 ###############################################################################
 # Tooling caches

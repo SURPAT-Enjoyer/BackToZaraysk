@@ -11,6 +11,91 @@ UEquippableItemData::UEquippableItemData()
     // EquipmentSlot = None по умолчанию
 }
 
+UHelmetBaseItemData::UHelmetBaseItemData()
+{
+    DisplayName = FText::FromString(TEXT("Шлем"));
+    SizeInCellsX = 1;
+    SizeInCellsY = 1;
+    EquipmentSlot = Helmet;
+    bRotatable = false;
+
+    bHasAdditionalStorage = false;
+    AdditionalGridSize = FIntPoint(0, 0);
+
+    // Визуал — небольшой параллелепипед (куб с масштабом), используем стандартный куб Engine
+    const FString MeshPath = TEXT("/Engine/BasicShapes/Cube.Cube");
+    EquippedMesh = LoadObject<UStaticMesh>(nullptr, *MeshPath);
+    if (!EquippedMesh || !EquippedMesh->IsValidLowLevel())
+    {
+        UE_LOG(LogTemp, Error, TEXT("UHelmetBaseItemData: Failed to load EquippedMesh from path: %s"), *MeshPath);
+        EquippedMesh = nullptr;
+    }
+
+    // Аттачим к head (bone name тоже ок для DoesSocketExist)
+    AttachSocketName = FName(TEXT("head"));
+
+    // Иконка (как у брони — test)
+    {
+        const FString IconPath = TEXT("/Game/BackToZaraysk/Core/Items/Equipment/test.test");
+        Icon = LoadObject<UTexture2D>(nullptr, *IconPath);
+        if (!Icon || !Icon->IsValidLowLevel())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("UHelmetBaseItemData: Failed to load Icon from path: %s"), *IconPath);
+            Icon = nullptr;
+        }
+    }
+
+    // Позиционирование на голове. Масштаб экипированного предмета = 1x1x1
+    RelativeTransform = FTransform(
+        FRotator(270.0f, 0.0f, 0.0f), // +180° + 90° вокруг оси Y (Pitch)
+        FVector(0.0f, 0.0f, 6.0f),
+        FVector(1.0f, 1.0f, 1.0f)
+    );
+}
+
+UCap01ItemData::UCap01ItemData()
+{
+    DisplayName = FText::FromString(TEXT("Кепка"));
+    // Размер по умолчанию 1x1, но оставляем редактируемым через DataAsset
+    SizeInCellsX = 1;
+    SizeInCellsY = 1;
+    EquipmentSlot = Helmet;
+    bRotatable = false;
+
+    bHasAdditionalStorage = false;
+    AdditionalGridSize = FIntPoint(0, 0);
+
+    // Модель кепки
+    // Файл: Content/BackToZaraysk/Core/Items/Equipment/SM_Cap_Bege.uasset
+    const FString MeshPath = TEXT("/Game/BackToZaraysk/Core/Items/Equipment/SM_Cap_Bege.SM_Cap_Bege");
+    EquippedMesh = LoadObject<UStaticMesh>(nullptr, *MeshPath);
+    if (!EquippedMesh || !EquippedMesh->IsValidLowLevel())
+    {
+        UE_LOG(LogTemp, Error, TEXT("UCap01ItemData: Failed to load EquippedMesh from path: %s"), *MeshPath);
+        EquippedMesh = nullptr;
+    }
+
+    AttachSocketName = FName(TEXT("head"));
+
+    // Иконка (можно заменить позже)
+    {
+        const FString IconPath = TEXT("/Game/BackToZaraysk/Core/Items/Equipment/test.test");
+        Icon = LoadObject<UTexture2D>(nullptr, *IconPath);
+        if (!Icon || !Icon->IsValidLowLevel())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("UCap01ItemData: Failed to load Icon from path: %s"), *IconPath);
+            Icon = nullptr;
+        }
+    }
+
+    // Трансформ на голове — дефолтный, можно подкрутить в редакторе на DataAsset
+    RelativeTransform = FTransform(
+        FRotator(0.0f, 0.0f, 0.0f),
+        FVector(0.0f, 0.0f, 0.0f),
+        FVector(1.0f, 1.0f, 1.0f)
+    );
+}
+
 UTacticalVestItemData::UTacticalVestItemData()
 {
     DisplayName = FText::FromString(TEXT("Тактический жилет"));

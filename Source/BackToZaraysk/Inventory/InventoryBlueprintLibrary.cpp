@@ -6,6 +6,8 @@
 #include "BackToZaraysk/GameData/Items/TacticalVest.h"
 #include "BackToZaraysk/GameData/Items/ArmorBase.h"
 #include "BackToZaraysk/GameData/Items/BulletproofVestBege.h"
+#include "BackToZaraysk/GameData/Items/HelmetBase.h"
+#include "BackToZaraysk/GameData/Items/Cap01.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupBackpack.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupParallelepiped.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupCube.h"
@@ -158,10 +160,15 @@ TSubclassOf<AActor> GetPickupClassForItem_Internal(const UInventoryItemData* Ite
     {
         return ABulletproofVestBege::StaticClass();
     }
+    if (ItemData->IsA(UCap01ItemData::StaticClass()))
+    {
+        return ACap01::StaticClass();
+    }
     if (const UEquippableItemData* Eq = Cast<UEquippableItemData>(ItemData))
     {
         switch (Eq->EquipmentSlot)
         {
+            case Helmet: return AHelmetBase::StaticClass();
             case Vest: return ATacticalVest::StaticClass();
             case Backpack: return APickupBackpack::StaticClass();
             case Armor: return AArmorBase::StaticClass();
@@ -185,10 +192,15 @@ TSubclassOf<AActor> UInventoryBlueprintLibrary::GetPickupClassForItem(const UInv
     {
         return ABulletproofVestBege::StaticClass();
     }
+    if (ItemData->IsA(UCap01ItemData::StaticClass()))
+    {
+        return ACap01::StaticClass();
+    }
     if (const UEquippableItemData* Eq = Cast<UEquippableItemData>(ItemData))
     {
         switch (Eq->EquipmentSlot)
         {
+            case Helmet: return AHelmetBase::StaticClass();
             case Vest: return ATacticalVest::StaticClass();
             case Backpack: return APickupBackpack::StaticClass();
             case Armor: return AArmorBase::StaticClass();
