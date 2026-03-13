@@ -1,0 +1,388 @@
+// Fill out your copyright notice in the Description page of Project Settings.
+
+
+#include "BTZBaseCharacter.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "Kismet/KismetSystemLibrary.h"
+#include "GameFramework/SpringArmComponent.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimBlueprintGeneratedClass.h"
+#include "Animations/BTZBaseCharacterAnimInstance.h"
+
+ABTZBaseCharacter::ABTZBaseCharacter(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer.SetDefaultSubobjectClass<UBTZBaseCharMovementComponent>(ACharacter::CharacterMovementComponentName))
+{
+	BTZBaseCharMovementComponent = StaticCast<UBTZBaseCharMovementComponent*>(GetCharacterMovement());
+
+	// Убираем масштабирование для более точных IK расчетов
+	IKScale = 1.0f;
+
+    // Default IK socket names for UE mannequins
+    LeftFootSocketName = FName(TEXT("foot_l"));
+    RightFootSocketName = FName(TEXT("foot_r"));
+
+    // Set default IK parameters
+    IKTraceExtendDistance = 30.0f;
+    IKInterpSpeed = 12.0f; // Оптимальная скорость интерполяции для плавного IK
+}
+
+void ABTZBaseCharacter::ChangeCrouchState()
+{
+	if (BTZBaseCharMovementComponent->IsCrouching())
+	{
+		UnCrouch();
+		//UnProne();
+        // debug off
+	}
+	else
+	{
+		Crouch();
+		//UnProne();
+        // debug off
+	}
+}
+
+void ABTZBaseCharacter::ChangeProneState()
+{
+	if (BTZBaseCharMovementComponent->IsProning())
+	{
+		BTZBaseCharMovementComponent->UnProne();
+		//UnCrouch();
+        // debug off
+	}
+	else
+	{
+		BTZBaseCharMovementComponent->Prone();
+		//UnCrouch();
+        // debug off
+	}
+}
+
+void ABTZBaseCharacter::StartSprint()
+{
+	bIsSprintRequested = true;
+	if (bIsCrouched)
+	{
+		UnCrouch();
+	}
+}
+
+void ABTZBaseCharacter::StopSprint()
+{
+	bIsSprintRequested = false;
+}
+
+
+void ABTZBaseCharacter::BeginPlay()
+{
+	Super::BeginPlay();
+	CurrentStamina = MaxStamina;
+	//Capsule = GetCapsuleComponent();
+    // debug off
+	// ИСПРАВЛЕНО: Оптимизированное расстояние трассировки для лучшего обнаружения
+	// Используем большее расстояние для более надежного обнаружения неровностей
+	IKTraceDistance = 100.0f; // Увеличено для лучшего обнаружения земли
+}
+
+void ABTZBaseCharacter::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+	BTZBaseCharMovementComponent->GetMaxSpeed();
+	TryChangeSprintState(DeltaTime);
+    // debug off
+	// Восстанавливаем выносливость только когда персонаж не спринтует и не падает
+	if (!BTZBaseCharMovementComponent->IsSprinting() && !BTZBaseCharMovementComponent->IsFalling())
+	{
+		CurrentStamina += StaminaRestoreVelocity * DeltaTime;
+		CurrentStamina = FMath::Clamp(CurrentStamina, 0.0f, MaxStamina);
+	}
+
+	// ИСПРАВЛЕНО: Улучшенная логика ИК
+	bool bIsOnGround = GetCharacterMovement()->IsMovingOnGround();
+	bool bIsMoving = GetVelocity().Size() > 10.0f; // Движется ли персонаж
+	
+	// Получаем сырые смещения
+	float RawLeftOffset = GetIKOffsetForASocket(LeftFootSocketName);
+	float RawRightOffset = GetIKOffsetForASocket(RightFootSocketName);
+	
+	// Определяем скорость интерполяции в зависимости от состояния
+	float CurrentIKSpeed;
+	if (bIsOnGround)
+	{
+		CurrentIKSpeed = bIsMoving ? IKInterpSpeed : IKInterpSpeed * 0.3f; // Медленнее когда стоит
+	}
+	else
+	{
+		CurrentIKSpeed = IKInterpSpeed * 0.7f; // В воздухе тоже работает, но медленнее
+	}
+
+	// Применяем ИК с улучшенной логикой
+	if (bIsOnGround)
+	{
+		// На земле - применяем рассчитанные смещения
+		IKLeftFootOffset = FMath::FInterpTo(IKLeftFootOffset, RawLeftOffset, DeltaTime, CurrentIKSpeed);
+		IKRightFootOffset = FMath::FInterpTo(IKRightFootOffset, RawRightOffset, DeltaTime, CurrentIKSpeed);
+	}
+	else
+	{
+		// В воздухе - не сбрасываем полностью, а интерполируем к нулю медленнее
+		IKLeftFootOffset = FMath::FInterpTo(IKLeftFootOffset, 0.0f, DeltaTime, CurrentIKSpeed * 0.5f);
+		IKRightFootOffset = FMath::FInterpTo(IKRightFootOffset, 0.0f, DeltaTime, CurrentIKSpeed * 0.5f);
+	}
+
+	// Передача IK данных в Animation Blueprint (только если не используется кастомный AnimInstance)
+	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
+	if (!Cast<UBTZBaseCharacterAnimInstance>(AnimInstance))
+	{
+		UpdateAnimationBlueprintIK();
+	}
+
+	// Debug IK - show raw and interpolated values
+    // debug off
+}
+
+void ABTZBaseCharacter::OnSprintStart_Implementation()
+{
+	UE_LOG(LogTemp, Log, TEXT("ABTZBaseCharacter::OnSprintStart_Implementation()"));
+}
+
+void ABTZBaseCharacter::OnSprintEnd_Implementation()
+{
+	UE_LOG(LogTemp, Log, TEXT("ABTZBaseCharacter::OnSprintEnd_Implementation()"));
+}
+
+bool ABTZBaseCharacter::CanSprint()
+{
+	return true;
+}
+
+void ABTZBaseCharacter::OnProneStart()
+{
+	//Capsule = CharacterOwner->GetCapsuleComponent();
+	//SetCapsuleSize(1, 1);
+	//GEngine->AddOnScreenDebugMessage(0, 1.0f, FColor::Yellow, FString::Printf(TEXT("%.2f"), Capsule));
+}
+
+void ABTZBaseCharacter::TryChangeSprintState(float DeltaTime)
+{
+	if ((BTZBaseCharMovementComponent->IsSprinting() || BTZBaseCharMovementComponent->IsFalling()) && !BTZBaseCharMovementComponent->IsProning())
+	{
+		CurrentStamina -= SprintStaminaConsumptionVelocity * DeltaTime;
+	}
+	if (CurrentStamina <= StaminaTiredThreshold)
+	{
+        // debug off
+		BTZBaseCharMovementComponent->SetIsOutOfStamina(true);
+		// CanAttemptJump() вызывается автоматически движком при попытке прыжка
+	}
+	if (CurrentStamina >= StaminaCanSprintAndJumpThreshold && !BTZBaseCharMovementComponent->IsProning())
+	{
+		BTZBaseCharMovementComponent->SetIsOutOfStamina(false);
+		if (bIsSprintRequested && !BTZBaseCharMovementComponent->IsSprinting() && CanSprint())
+		{
+			BTZBaseCharMovementComponent->StartSprint();
+			OnSprintStart();
+		}
+	}
+	if (!bIsSprintRequested && BTZBaseCharMovementComponent->IsSprinting() )
+	{
+		BTZBaseCharMovementComponent->StopSprint();
+		OnSprintEnd();
+	}
+}
+
+float ABTZBaseCharacter::GetIKOffsetForASocket(const FName& SocketName)
+{
+	float Result = 0.0f;
+
+	if (!GetMesh())
+	{
+		return Result;
+	}
+
+	FVector SocketLocation = GetMesh()->GetSocketLocation(SocketName);
+
+	// Check if socket exists - use a more reliable method
+	if (!GetMesh()->DoesSocketExist(SocketName))
+	{
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(3, 1.0f, FColor::Red, FString::Printf(TEXT("IK Socket %s not found!"), *SocketName.ToString()));
+		}
+		return Result;
+	}
+
+    // ИСПРАВЛЕНО: Оптимизированная трассировка для лучшего обнаружения земли
+    // Начинаем немного выше сокета и трассируем вниз
+    FVector TraceStart = SocketLocation + FVector(0.f, 0.f, 15.0f); // Увеличено для надежности
+    FVector TraceEnd = SocketLocation - FVector(0.f, 0.f, IKTraceDistance);
+
+    // Debug trace visualization
+    // debug off
+    
+	FHitResult HitResult;
+	// ИСПРАВЛЕНО: Используем более широкий диапазон коллизий для лучшего обнаружения
+	ETraceTypeQuery TraceType = UEngineTypes::ConvertToTraceType(ECC_WorldStatic);
+
+	// Исключаем персонажа из трассировки
+	TArray<AActor*> ActorsToIgnore;
+	ActorsToIgnore.Add(this);
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return Result;
+	}
+
+    if (UKismetSystemLibrary::LineTraceSingle(World, TraceStart, TraceEnd, TraceType, true, ActorsToIgnore, EDrawDebugTrace::None, HitResult, true))
+	{
+        // ИСПРАВЛЕНО: Правильный расчет смещения для ИК
+        // Если земля ниже сокета - нога должна опуститься (отрицательное смещение)
+        // Если земля выше сокета - нога должна подняться (положительное смещение)
+        float RawOffset = SocketLocation.Z - HitResult.Location.Z;
+        Result = RawOffset;
+
+        // Clamp result to reasonable bounds (в сантиметрах) - увеличены границы
+        Result = FMath::Clamp(Result, -25.0f, 25.0f);
+
+        // debug off
+	}
+    else
+    {
+    	// ИСПРАВЛЕНО: Улучшенный fallback trace с большим расстоянием
+    	FVector FallbackTraceEnd = SocketLocation - FVector(0.f, 0.f, 80.0f); // Увеличено для лучшего обнаружения
+    	if (UKismetSystemLibrary::LineTraceSingle(World, TraceStart, FallbackTraceEnd, TraceType, true, ActorsToIgnore, EDrawDebugTrace::None, HitResult, true))
+    	{
+    		float RawOffset = SocketLocation.Z - HitResult.Location.Z;
+    		Result = RawOffset;
+
+    		// Clamp result to reasonable bounds
+    		Result = FMath::Clamp(Result, -25.0f, 25.0f);
+
+            // debug off
+    	}
+    	else
+    	{
+            // debug off
+    		// Если не найдена земля, возвращаем 0 - нога остается в исходном положении
+    		Result = 0.0f;
+    	}
+    }
+
+	return Result;
+}
+
+void ABTZBaseCharacter::UpdateAnimationBlueprintIK()
+{
+	// Получаем AnimInstance
+	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
+	if (!AnimInstance)
+	{
+		return;
+	}
+
+	// Проверяем, является ли это нашим кастомным AnimInstance
+	UBTZBaseCharacterAnimInstance* BTZAnimInstance = Cast<UBTZBaseCharacterAnimInstance>(AnimInstance);
+	if (BTZAnimInstance)
+	{
+		// Если это наш AnimInstance, IK данные уже обновляются в NativeUpdateAnimation
+		// Ничего дополнительного делать не нужно
+		return;
+	}
+
+	// Для других AnimInstance - используем стандартный метод поиска свойств
+	UAnimBlueprintGeneratedClass* AnimBPClass = Cast<UAnimBlueprintGeneratedClass>(AnimInstance->GetClass());
+	if (!AnimBPClass)
+	{
+		return;
+	}
+
+	// Находим свойства для IK - используем стандартные имена
+	FProperty* LeftFootProperty = AnimBPClass->FindPropertyByName(TEXT("LeftFootEffectorLocation"));
+	FProperty* RightFootProperty = AnimBPClass->FindPropertyByName(TEXT("RightFootEffectorLocation"));
+
+	if (LeftFootProperty && RightFootProperty)
+	{
+		// Получаем указатели на свойства
+		FVector* LeftFootPtr = LeftFootProperty->ContainerPtrToValuePtr<FVector>(AnimInstance);
+		FVector* RightFootPtr = RightFootProperty->ContainerPtrToValuePtr<FVector>(AnimInstance);
+
+		if (LeftFootPtr && RightFootPtr)
+		{
+			// Устанавливаем значения IK
+			LeftFootPtr->Z = IKLeftFootOffset;
+			RightFootPtr->Z = IKRightFootOffset;
+
+            // debug off
+		}
+	}
+	else
+	{
+		// Альтернативный метод - попробуем вызвать Blueprint функции
+		UFunction* SetLeftFootIK = AnimInstance->GetClass()->FindFunctionByName(TEXT("SetLeftFootIK"));
+		UFunction* SetRightFootIK = AnimInstance->GetClass()->FindFunctionByName(TEXT("SetRightFootIK"));
+		
+		if (SetLeftFootIK && SetRightFootIK)
+		{
+			// Вызываем Blueprint функции
+			AnimInstance->ProcessEvent(SetLeftFootIK, &IKLeftFootOffset);
+			AnimInstance->ProcessEvent(SetRightFootIK, &IKRightFootOffset);
+			
+            // debug off
+		}
+		else
+		{
+            // debug off
+		}
+	}
+}
+
+void ABTZBaseCharacter::TryClimbObstacle()
+{
+	// Базовая реализация - ничего не делает
+	// Переопределяется в PlayerCharacter
+}
+
+void ABTZBaseCharacter::Turn(float Value)
+{
+	// Блокируем поворот если активен FreeLook
+	if (bRotationBlocked) return;
+	
+	// Стандартный поворот персонажа
+	AddControllerYawInput(Value);
+}
+
+void ABTZBaseCharacter::LookUp(float Value)
+{
+	// Блокируем поворот если активен FreeLook
+	if (bRotationBlocked) return;
+	
+	// Стандартный поворот камеры
+	AddControllerPitchInput(Value);
+}
+
+void ABTZBaseCharacter::SetRotationBlocked(bool bBlocked)
+{
+	bRotationBlocked = bBlocked;
+	
+    // debug off
+}
+
+void ABTZBaseCharacter::SetHeadRotation(float Yaw, float Pitch)
+{
+	// Сохраняем значения поворота головы в градусах
+	HeadYawRotation = Yaw;
+	HeadPitchRotation = Pitch;
+	
+	// Применяем поворот головы через Transform (Modify) Bone
+    // debug off
+}
+
+void ABTZBaseCharacter::ResetHeadRotation()
+{
+	HeadYawRotation = 0.0f;
+	HeadPitchRotation = 0.0f;
+	
+    // debug off
+}
