@@ -9,6 +9,8 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimBlueprintGeneratedClass.h"
 #include "Animations/BTZBaseCharacterAnimInstance.h"
+#include "Engine/World.h"
+#include "DrawDebugHelpers.h"
 
 ABTZBaseCharacter::ABTZBaseCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UBTZBaseCharMovementComponent>(ACharacter::CharacterMovementComponentName))
@@ -18,9 +20,10 @@ ABTZBaseCharacter::ABTZBaseCharacter(const FObjectInitializer& ObjectInitializer
 	// Убираем масштабирование для более точных IK расчетов
 	IKScale = 1.0f;
 
-    // Default IK socket names for UE mannequins
-    LeftFootSocketName = FName(TEXT("foot_l"));
-    RightFootSocketName = FName(TEXT("foot_r"));
+    // Trace / IK socket names must match ABP usage.
+    // We use the mannequin convention bones: ik_foot_l / ik_foot_r.
+    LeftFootSocketName = FName(TEXT("ik_foot_l"));
+    RightFootSocketName = FName(TEXT("ik_foot_r"));
 
     // Set default IK parameters
     IKTraceExtendDistance = 30.0f;
@@ -83,6 +86,39 @@ void ABTZBaseCharacter::BeginPlay()
 	// ИСПРАВЛЕНО: Оптимизированное расстояние трассировки для лучшего обнаружения
 	// Используем большее расстояние для более надежного обнаружения неровностей
 	IKTraceDistance = 100.0f; // Увеличено для лучшего обнаружения земли
+
+	// Startup guard: clear IK offsets/hit cache so PIE start doesn't apply stale effector targets.
+	IKLeftFootOffset = 0.0f;
+	IKRightFootOffset = 0.0f;
+	LastLeftFootHitZ = 0.0f;
+	LastRightFootHitZ = 0.0f;
+	bLastLeftFootHadHit = false;
+	bLastRightFootHadHit = false;
+
+	if (bDebugFootIK && GEngine && GetMesh())
+	{
+		// Users can disable on-screen messages via console command (DisableAllScreenMessages).
+		// For IK debugging we force-enable them so we always see HIT/MISS diagnostics.
+		GEngine->bEnableOnScreenDebugMessages = true;
+		GEngine->bEnableOnScreenDebugMessagesDisplay = true;
+
+		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+		{
+			const bool bIsBTZ = (Cast<UBTZBaseCharacterAnimInstance>(AnimInstance) != nullptr);
+			GEngine->AddOnScreenDebugMessage(901, 8.0f, FColor::Cyan,
+				FString::Printf(TEXT("IK Debug: AnimInstance=%s (BTZ=%s)"),
+					*AnimInstance->GetClass()->GetName(),
+					bIsBTZ ? TEXT("YES") : TEXT("NO")));
+			UE_LOG(LogTemp, Warning, TEXT("IK Debug: AnimInstance=%s (BTZ=%s)"),
+				*AnimInstance->GetClass()->GetName(),
+				bIsBTZ ? TEXT("YES") : TEXT("NO"));
+		}
+		else
+		{
+			GEngine->AddOnScreenDebugMessage(901, 8.0f, FColor::Red, TEXT("IK Debug: Mesh has no AnimInstance"));
+			UE_LOG(LogTemp, Warning, TEXT("IK Debug: Mesh has no AnimInstance"));
+		}
+	}
 }
 
 void ABTZBaseCharacter::Tick(float DeltaTime)
@@ -103,8 +139,8 @@ void ABTZBaseCharacter::Tick(float DeltaTime)
 	bool bIsMoving = GetVelocity().Size() > 10.0f; // Движется ли персонаж
 	
 	// Получаем сырые смещения
-	float RawLeftOffset = GetIKOffsetForASocket(LeftFootSocketName);
-	float RawRightOffset = GetIKOffsetForASocket(RightFootSocketName);
+	float RawLeftOffset = GetIKOffsetForFoot(true);
+	float RawRightOffset = GetIKOffsetForFoot(false);
 	
 	// Определяем скорость интерполяции в зависимости от состояния
 	float CurrentIKSpeed;
@@ -139,7 +175,18 @@ void ABTZBaseCharacter::Tick(float DeltaTime)
 	}
 
 	// Debug IK - show raw and interpolated values
-    // debug off
+	if (bDebugFootIK && GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(902, 10.0f, FColor::Yellow,
+			FString::Printf(TEXT("IK Debug: L=%.2f R=%.2f OnGround=%d Vel=%.1f"),
+				IKLeftFootOffset, IKRightFootOffset,
+				GetCharacterMovement() ? (int32)GetCharacterMovement()->IsMovingOnGround() : 0,
+				GetVelocity().Size()));
+		UE_LOG(LogTemp, Warning, TEXT("IK Debug Tick: L=%.2f R=%.2f OnGround=%d Vel=%.1f"),
+			IKLeftFootOffset, IKRightFootOffset,
+			GetCharacterMovement() ? (int32)GetCharacterMovement()->IsMovingOnGround() : 0,
+			GetVelocity().Size());
+	}
 }
 
 void ABTZBaseCharacter::OnSprintStart_Implementation()
@@ -192,38 +239,65 @@ void ABTZBaseCharacter::TryChangeSprintState(float DeltaTime)
 	}
 }
 
-float ABTZBaseCharacter::GetIKOffsetForASocket(const FName& SocketName)
+FVector ABTZBaseCharacter::GetFootTraceOriginWorld(bool bLeft) const
+{
+	// Trace origin anchored to the mesh foot location (pre-IK) so stairs can be detected correctly.
+	const USkeletalMeshComponent* MeshComp = GetMesh();
+	if (!MeshComp)
+	{
+		return GetActorLocation();
+	}
+
+	const FName FootName = bLeft ? LeftFootSocketName : RightFootSocketName;
+	if (FootName.IsNone())
+	{
+		return GetActorLocation();
+	}
+
+	const FVector FootWorld = MeshComp->GetSocketLocation(FootName);
+
+	FVector Origin = FootWorld;
+	Origin.X += FootTraceForwardOffsetCm;
+	Origin.Y += (bLeft ? -FootTraceLateralOffsetCm : FootTraceLateralOffsetCm);
+	// Move down from socket to (approx) bottom of foot mesh.
+	Origin.Z -= FootTraceSocketToFootBottomOffsetCm;
+	return Origin;
+}
+
+float ABTZBaseCharacter::GetIKOffsetForFoot(bool bLeft)
 {
 	float Result = 0.0f;
 
-	if (!GetMesh())
-	{
-		return Result;
-	}
+	const bool bIsDebugFoot = bDebugFootIK && bLeft;
+	FVector OriginWorld = GetFootTraceOriginWorld(bLeft);
+	float FootSocketZ = OriginWorld.Z;
 
-	FVector SocketLocation = GetMesh()->GetSocketLocation(SocketName);
-
-	// Check if socket exists - use a more reliable method
-	if (!GetMesh()->DoesSocketExist(SocketName))
+	// For debug: actual socket Z (before subtracting FootTraceSocketToFootBottomOffsetCm).
+	if (USkeletalMeshComponent* MeshComp = GetMesh())
 	{
-		if (GEngine)
+		const FName FootName = bLeft ? LeftFootSocketName : RightFootSocketName;
+		if (!FootName.IsNone())
 		{
-			GEngine->AddOnScreenDebugMessage(3, 1.0f, FColor::Red, FString::Printf(TEXT("IK Socket %s not found!"), *SocketName.ToString()));
+			FootSocketZ = MeshComp->GetSocketLocation(FootName).Z;
 		}
-		return Result;
 	}
 
     // ИСПРАВЛЕНО: Оптимизированная трассировка для лучшего обнаружения земли
     // Начинаем немного выше сокета и трассируем вниз
-    FVector TraceStart = SocketLocation + FVector(0.f, 0.f, 15.0f); // Увеличено для надежности
-    FVector TraceEnd = SocketLocation - FVector(0.f, 0.f, IKTraceDistance);
+	const float StartZ = OriginWorld.Z + FootTraceStartAboveCm;
+	const float EndZ = OriginWorld.Z - IKTraceDistance;
+	FVector TraceStart(OriginWorld.X, OriginWorld.Y, StartZ);
+	FVector TraceEnd(OriginWorld.X, OriginWorld.Y, EndZ);
 
     // Debug trace visualization
     // debug off
     
-	FHitResult HitResult;
-	// ИСПРАВЛЕНО: Используем более широкий диапазон коллизий для лучшего обнаружения
-	ETraceTypeQuery TraceType = UEngineTypes::ConvertToTraceType(ECC_WorldStatic);
+	FHitResult HitResult = FHitResult();
+	FHitResult HitResultDown = FHitResult();
+	FHitResult HitResultUp = FHitResult();
+	// ВАЖНО: разные ассеты по-разному отвечают на complex/simple.
+	// Поэтому делаем попытки по каналам и по режимам complex/simple.
+	const ECollisionChannel ChannelsToTry[] = { ECC_Visibility, ECC_WorldStatic, ECC_WorldDynamic };
 
 	// Исключаем персонажа из трассировки
 	TArray<AActor*> ActorsToIgnore;
@@ -235,39 +309,259 @@ float ABTZBaseCharacter::GetIKOffsetForASocket(const FName& SocketName)
 		return Result;
 	}
 
-    if (UKismetSystemLibrary::LineTraceSingle(World, TraceStart, TraceEnd, TraceType, true, ActorsToIgnore, EDrawDebugTrace::None, HitResult, true))
+	const auto DoTrace = [&](ECollisionChannel Channel, const FVector& Start, const FVector& End, bool bTraceComplex) -> bool
 	{
-        // ИСПРАВЛЕНО: Правильный расчет смещения для ИК
-        // Если земля ниже сокета - нога должна опуститься (отрицательное смещение)
-        // Если земля выше сокета - нога должна подняться (положительное смещение)
-        float RawOffset = SocketLocation.Z - HitResult.Location.Z;
-        Result = RawOffset;
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(FootIKTrace), bTraceComplex);
+		Params.AddIgnoredActors(ActorsToIgnore);
+		return World->LineTraceSingleByChannel(HitResult, Start, End, Channel, Params);
+	};
 
-        // Clamp result to reasonable bounds (в сантиметрах) - увеличены границы
-        Result = FMath::Clamp(Result, -25.0f, 25.0f);
+	// Two-direction trace:
+	// - Down: Start(high) -> End(low)
+	// - Up:   Start(low)  -> End(high)
+	// When the foot is clipped into the surface, the first intersection depends on direction,
+	// so we pick the hit closer to OriginZ to get the "correct side" of the mesh.
+	const FVector TraceStartLow = TraceEnd;
+	const FVector TraceEndHigh = TraceStart;
 
-        // debug off
+	bool bHitDown = false;
+	bool bHitUp = false;
+	ECollisionChannel HitChannelDown = ECC_Visibility;
+	ECollisionChannel HitChannelUp = ECC_Visibility;
+	bool bHitComplexDown = true;
+	bool bHitComplexUp = true;
+
+	// Down trace
+	for (ECollisionChannel Ch : ChannelsToTry)
+	{
+		if (DoTrace(Ch, TraceStart, TraceEnd, true))
+		{
+			bHitDown = true;
+			HitResultDown = HitResult;
+			HitChannelDown = Ch;
+			bHitComplexDown = true;
+			break;
+		}
+		if (DoTrace(Ch, TraceStart, TraceEnd, false))
+		{
+			bHitDown = true;
+			HitResultDown = HitResult;
+			HitChannelDown = Ch;
+			bHitComplexDown = false;
+			break;
+		}
+	}
+
+	// Up trace (reverse direction)
+	for (ECollisionChannel Ch : ChannelsToTry)
+	{
+		if (DoTrace(Ch, TraceStartLow, TraceEndHigh, true))
+		{
+			bHitUp = true;
+			HitResultUp = HitResult;
+			HitChannelUp = Ch;
+			bHitComplexUp = true;
+			break;
+		}
+		if (DoTrace(Ch, TraceStartLow, TraceEndHigh, false))
+		{
+			bHitUp = true;
+			HitResultUp = HitResult;
+			HitChannelUp = Ch;
+			bHitComplexUp = false;
+			break;
+		}
+	}
+
+	if (bHitDown || bHitUp)
+	{
+		const float RawDown = bHitDown ? (HitResultDown.ImpactPoint.Z - OriginWorld.Z) : FLT_MAX;
+		const float RawUp = bHitUp ? (HitResultUp.ImpactPoint.Z - OriginWorld.Z) : FLT_MAX;
+
+		// Choose hit:
+		// - If penetrating: prefer UP only if it exists (to help exit geometry).
+		//   If only DOWN exists, we will still apply a penetration lift below.
+		// - If NOT penetrating and we have BOTH hits: choose the hit with smaller abs(raw)
+		//   (closest to OriginZ). This avoids choosing the "wrong side" hit on thin/double-sided meshes.
+		bool bChooseUp = false;
+
+		// Penetration test:
+		// If the foot trace origin is currently inside world collision (clipping),
+		// prefer the UP hit to move the foot out.
+		bool bIsPenetrating = false;
+		{
+			const FCollisionShape Sphere = FCollisionShape::MakeSphere(FootPenetrationTestRadiusCm);
+			FCollisionQueryParams Params(SCENE_QUERY_STAT(FootIKOverlap), false);
+			Params.AddIgnoredActors(ActorsToIgnore);
+
+			for (ECollisionChannel Ch : ChannelsToTry)
+			{
+				if (World->OverlapBlockingTestByChannel(OriginWorld, FQuat::Identity, Ch, Sphere, Params))
+				{
+					bIsPenetrating = true;
+					break;
+				}
+			}
+		}
+
+		if (bIsPenetrating)
+		{
+			bChooseUp = bHitUp; // only true when UP exists
+		}
+		else
+		{
+			if (bHitDown && bHitUp)
+			{
+				bChooseUp = FMath::Abs(RawUp) < FMath::Abs(RawDown);
+			}
+			else if (bHitUp && !bHitDown)
+			{
+				bChooseUp = true;
+			}
+		}
+
+		float ChosenRawOffset = bChooseUp ? RawUp : RawDown;
+		const float ChosenHitZ = bChooseUp ? HitResultUp.ImpactPoint.Z : HitResultDown.ImpactPoint.Z;
+			const bool bChosenComplex = bChooseUp ? bHitComplexUp : bHitComplexDown;
+			const ECollisionChannel ChosenHitChannel = bChooseUp ? HitChannelUp : HitChannelDown;
+
+		// If we are penetrating, bias result upward to resolve "utopanie"
+		// even when only DOWN hit is available.
+		if (bIsPenetrating)
+		{
+			ChosenRawOffset += FootPenetrationResolveLiftCm;
+		}
+
+		// FLAT: suppress micro jitter when offset is within +/- epsilon.
+		{
+			const bool bOffsetSmall = FMath::Abs(ChosenRawOffset) <= FootFlatOffsetEpsilonCm;
+			const float PrevHitZ = bLeft ? LastLeftFootHitZ : LastRightFootHitZ;
+			const bool bPrevHadHit = bLeft ? bLastLeftFootHadHit : bLastRightFootHadHit;
+
+			const float Speed2D = GetVelocity().Size2D();
+			const bool bIsNearlyStopped = Speed2D <= FootFlatMaxSpeedCmPerSec;
+
+			// Require hit stability to consider it truly flat.
+			const bool bHitStable =
+				bPrevHadHit &&
+				FMath::Abs(ChosenHitZ - PrevHitZ) <= FootFlatHitZDeltaEpsilonCm;
+
+			if (!bIsPenetrating && bIsNearlyStopped && bOffsetSmall && bHitStable)
+			{
+				ChosenRawOffset = 0.0f;
+			}
+		}
+
+		// Visual debug:
+		// - Red line: DOWN trace
+		// - Blue line: UP trace
+		// - Green/Cyan spheres: raw hits
+		// - Yellow sphere: chosen contact
+		if (bDebugFootIK && World)
+		{
+			DrawDebugLine(World, TraceStart, TraceEnd, FColor::Red, false, 0.15f, 0, 0.7f);			// DOWN
+			DrawDebugLine(World, TraceEnd, TraceStart, FColor::Blue, false, 0.15f, 0, 0.7f);			// UP
+
+			if (bHitDown && HitResultDown.bBlockingHit)
+			{
+				DrawDebugSphere(World, HitResultDown.ImpactPoint, 2.0f, 10, FColor::Green, false, 0.15f, 0);
+			}
+			if (bHitUp && HitResultUp.bBlockingHit)
+			{
+				DrawDebugSphere(World, HitResultUp.ImpactPoint, 2.0f, 10, FColor::Cyan, false, 0.15f, 0);
+			}
+
+			const FVector ContactPoint =
+				bChooseUp
+					? (HitResultUp.bBlockingHit ? HitResultUp.ImpactPoint : HitResultUp.Location)
+					: (HitResultDown.bBlockingHit ? HitResultDown.ImpactPoint : HitResultDown.Location);
+
+			DrawDebugSphere(World, ContactPoint, 2.4f, 10, FColor::Yellow, false, 0.15f, 0);
+		}
+
+		Result = ChosenRawOffset;
+
+        // Clamp result to reasonable bounds (cm). Larger range makes IK more visible,
+        // but extreme values still cause bad knee angles.
+        Result = FMath::Clamp(Result, -45.0f, 45.0f);
+
+		if (bDebugFootIK && GEngine)
+		{
+			const FName FootName = bLeft ? LeftFootSocketName : RightFootSocketName;
+			GEngine->AddOnScreenDebugMessage(
+				bLeft ? 930 : 931,
+				0.0f,
+				bLeft ? FColor::Green : FColor::Emerald,
+				FString::Printf(
+					TEXT("IKTrace %s Foot=%s OriginZ=%.1f FootZ=%.1f StartZ=%.1f DownHitZ=%.2f UpHitZ=%.2f DownRaw=%.2f UpRaw=%.2f Pen=%d Ch=%s Raw=%.2f Clamped=%.2f"),
+					bLeft ? TEXT("L") : TEXT("R"),
+					*FootName.ToString(),
+					OriginWorld.Z,
+					FootSocketZ,
+					TraceStart.Z,
+					bHitDown ? HitResultDown.ImpactPoint.Z : -9999.0f,
+					bHitUp ? HitResultUp.ImpactPoint.Z : -9999.0f,
+					bHitDown ? RawDown : 0.0f,
+					bHitUp ? RawUp : 0.0f,
+					bIsPenetrating ? 1 : 0,
+					bChooseUp ? TEXT("UP") : TEXT("DOWN"),
+					ChosenRawOffset,
+					Result
+				)
+			);
+		}
+
+		// store last hit z
+		if (bLeft)
+		{
+			LastLeftFootHitZ = ChosenHitZ;
+			bLastLeftFootHadHit = true;
+		}
+		else
+		{
+			LastRightFootHitZ = ChosenHitZ;
+			bLastRightFootHadHit = true;
+		}
+
+		if (bIsDebugFoot && GEngine)
+		{
+			const TCHAR* ChName =
+				(ChosenHitChannel == ECC_Visibility) ? TEXT("Visibility") :
+				(ChosenHitChannel == ECC_WorldStatic) ? TEXT("WorldStatic") :
+				(ChosenHitChannel == ECC_WorldDynamic) ? TEXT("WorldDynamic") :
+				TEXT("Other");
+			GEngine->AddOnScreenDebugMessage(910, 10.0f, FColor::Green,
+				FString::Printf(TEXT("IK Trace HIT (%s, %s) Ch=%s Raw=%.2f Clamped=%.2f HitZ=%.2f FootZ=%.2f"),
+					ChName,
+					bChosenComplex ? TEXT("complex") : TEXT("simple"),
+					bChooseUp ? TEXT("UP") : TEXT("DOWN"),
+					ChosenRawOffset, Result,
+					ChosenHitZ, OriginWorld.Z));
+			UE_LOG(LogTemp, Warning, TEXT("IK Trace HIT (%s, %s) Ch=%s Raw=%.2f Clamped=%.2f HitZ=%.2f FootZ=%.2f"),
+				ChName,
+				bChosenComplex ? TEXT("complex") : TEXT("simple"),
+				bChooseUp ? TEXT("UP") : TEXT("DOWN"),
+				ChosenRawOffset, Result,
+				ChosenHitZ, OriginWorld.Z);
+		}
 	}
     else
     {
-    	// ИСПРАВЛЕНО: Улучшенный fallback trace с большим расстоянием
-    	FVector FallbackTraceEnd = SocketLocation - FVector(0.f, 0.f, 80.0f); // Увеличено для лучшего обнаружения
-    	if (UKismetSystemLibrary::LineTraceSingle(World, TraceStart, FallbackTraceEnd, TraceType, true, ActorsToIgnore, EDrawDebugTrace::None, HitResult, true))
-    	{
-    		float RawOffset = SocketLocation.Z - HitResult.Location.Z;
-    		Result = RawOffset;
+		// FLAT: no hits in either direction => suppress IK noise on flat ground.
+		if (bLeft) bLastLeftFootHadHit = false; else bLastRightFootHadHit = false;
+		Result = 0.0f;
 
-    		// Clamp result to reasonable bounds
-    		Result = FMath::Clamp(Result, -25.0f, 25.0f);
-
-            // debug off
-    	}
-    	else
-    	{
-            // debug off
-    		// Если не найдена земля, возвращаем 0 - нога остается в исходном положении
-    		Result = 0.0f;
-    	}
+		if (bIsDebugFoot && GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(
+				910,
+				10.0f,
+				FColor::Red,
+				FString::Printf(TEXT("IK Trace FLAT (no UP/DOWN hit) StartZ=%.2f EndZ=%.2f SockZ=%.2f Dist=%.1f"),
+					TraceStart.Z, TraceEnd.Z, OriginWorld.Z, IKTraceDistance));
+			UE_LOG(LogTemp, Warning, TEXT("IK Trace FLAT (no UP/DOWN hit) StartZ=%.2f EndZ=%.2f SockZ=%.2f Dist=%.1f"),
+				TraceStart.Z, TraceEnd.Z, OriginWorld.Z, IKTraceDistance);
+		}
     }
 
 	return Result;

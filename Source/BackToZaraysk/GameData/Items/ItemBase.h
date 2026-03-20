@@ -22,6 +22,7 @@ class BACKTOZARAYSK_API AItemBase : public APickupBase
 
 public:
 	AItemBase();
+	virtual void Tick(float DeltaSeconds) override;
 
 protected:
 	virtual void BeginPlay() override;
@@ -53,6 +54,14 @@ public:
 	// Вес в килограммах. Может быть отрицательным. Пока ни на что не влияет.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Item|Stats", meta=(Units="kg", ForceUnits="kg", Delta="0.01"))
 	float WeightKg = 1.00f;
+
+	// Плавучесть: -1 тонет, 0 нейтрально, 1 всплывает (пока нигде не применяется).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Item|Water", meta=(ClampMin="-1.0", ClampMax="1.0", UIMin="-1.0", UIMax="1.0", Delta="0.1"))
+	float Buoyancy = 0.0f;
+
+	// Сила плавучести для физики (множитель, см/с^2 относительно g). 1.0 ~ "как вода".
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Item|Water", meta=(ClampMin="0.0", UIMin="0.0"))
+	float BuoyancyStrength = 1.0f;
 
 	// Множитель масштаба визуала (для назначенных мешей). По умолчанию 1x1x1.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Item|Visual")

@@ -6,9 +6,13 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture2D.h"
 #include "Materials/MaterialInterface.h"
+#include "WaterSubsystem.h"
+#include "WaterBodyComponent.h"
 
 AItemBase::AItemBase()
 {
+	PrimaryActorTick.bCanEverTick = true;
+
 	// Добавляем SkeletalMesh-компонент (опциональный визуал)
 	SkeletalMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("SkeletalMesh"));
 	if (SkeletalMesh)
@@ -25,6 +29,87 @@ AItemBase::AItemBase()
 	// Placeholder-визуал: маленький куб, если пользователь не назначил меши
 	ApplyDefaultVisualIfNeeded();
 	SyncVisibleMeshAndScale();
+}
+
+void AItemBase::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	// Buoyancy only makes sense for physics-simulated pickups
+	if (FMath::IsNearlyZero(Buoyancy) || BuoyancyStrength <= 0.0f)
+	{
+		return;
+	}
+
+	UStaticMeshComponent* PhysComp = Mesh;
+	if (!PhysComp || !PhysComp->IsSimulatingPhysics())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	UWaterSubsystem* WaterSubsystem = World ? UWaterSubsystem::GetWaterSubsystem(World) : nullptr;
+	FWaterBodyManager* Manager = WaterSubsystem ? UWaterSubsystem::GetWaterBodyManager(World) : nullptr;
+	if (!Manager)
+	{
+		return;
+	}
+
+	const FVector QueryLoc = GetActorLocation();
+	float BestImmersion = 0.0f;
+	float BestSurfaceZ = 0.0f;
+
+	Manager->ForEachWaterBodyComponent([&](UWaterBodyComponent* Comp)
+	{
+		if (!Comp) return true;
+		const FWaterBodyQueryResult R = Comp->QueryWaterInfoClosestToWorldLocation(
+			QueryLoc,
+			EWaterBodyQueryFlags::ComputeLocation | EWaterBodyQueryFlags::ComputeImmersionDepth | EWaterBodyQueryFlags::IncludeWaves
+		);
+		const float D = R.GetImmersionDepth();
+		if (D > BestImmersion)
+		{
+			BestImmersion = D;
+			BestSurfaceZ = R.GetWaterSurfaceLocation().Z;
+		}
+		return true;
+	});
+
+	if (BestImmersion <= 0.0f)
+	{
+		return; // not in water
+	}
+
+	// Apply buoyant force: proportional to mass and Buoyancy (-1..1)
+	const float Mass = PhysComp->GetMass();
+	const float G = 980.0f; // cm/s^2
+	const float Accel = G * BuoyancyStrength * Buoyancy;
+	PhysComp->AddForce(FVector(0.f, 0.f, Accel * Mass));
+
+	// Simple water drag
+	const FVector V = PhysComp->GetPhysicsLinearVelocity();
+	const float ImmersionFactorForDrag = FMath::Clamp(BestImmersion / 60.0f, 0.0f, 1.0f);
+	const float DragCoeff = 2.5f * ImmersionFactorForDrag;
+	PhysComp->AddForce(-V * DragCoeff * Mass);
+
+	// Soft clamp near surface when buoyant: avoid shooting out of water
+	if (Buoyancy > 0.0f)
+	{
+		const float MaxZ = BestSurfaceZ - 5.0f;
+		if (GetActorLocation().Z > MaxZ)
+		{
+			FVector Loc = GetActorLocation();
+			Loc.Z = MaxZ;
+			SetActorLocation(Loc, false, nullptr, ETeleportType::TeleportPhysics);
+			// kill upward velocity
+			if (V.Z > 0.0f)
+			{
+				FVector NewV = V;
+				NewV.Z = 0.0f;
+				PhysComp->SetPhysicsLinearVelocity(NewV);
+			}
+		}
+	}
 }
 
 void AItemBase::OnConstruction(const FTransform& Transform)

@@ -23,6 +23,7 @@
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/Engine.h"
+#include "InputCoreTypes.h"
 
 namespace
 {
@@ -156,6 +157,52 @@ void ABTZPlayerController::SetupInputComponent()
     // Свободное вращение камеры средней кнопкой мыши
     InputComponent->BindAction("FreeLook", EInputEvent::IE_Pressed, this, &ABTZPlayerController::StartFreeLook);
     InputComponent->BindAction("FreeLook", EInputEvent::IE_Released, this, &ABTZPlayerController::StopFreeLook);
+
+	// Swimming vertical control (no PhysicsVolume): Ctrl = dive, Space = surface (only when swimming is active)
+	InputComponent->BindKey(EKeys::LeftControl, IE_Pressed, this, &ABTZPlayerController::SwimDivePressed);
+	InputComponent->BindKey(EKeys::LeftControl, IE_Released, this, &ABTZPlayerController::SwimDiveReleased);
+	InputComponent->BindKey(EKeys::RightControl, IE_Pressed, this, &ABTZPlayerController::SwimDivePressed);
+	InputComponent->BindKey(EKeys::RightControl, IE_Released, this, &ABTZPlayerController::SwimDiveReleased);
+	InputComponent->BindKey(EKeys::SpaceBar, IE_Pressed, this, &ABTZPlayerController::SwimSurfacePressed);
+	InputComponent->BindKey(EKeys::SpaceBar, IE_Released, this, &ABTZPlayerController::SwimSurfaceReleased);
+}
+
+void ABTZPlayerController::SwimDivePressed()
+{
+	if (APlayerCharacter* PC = Cast<APlayerCharacter>(GetPawn()))
+	{
+		if (PC->IsSwimmingActive())
+		{
+			PC->SetSwimDiveHeld(true);
+		}
+	}
+}
+
+void ABTZPlayerController::SwimDiveReleased()
+{
+	if (APlayerCharacter* PC = Cast<APlayerCharacter>(GetPawn()))
+	{
+		PC->SetSwimDiveHeld(false);
+	}
+}
+
+void ABTZPlayerController::SwimSurfacePressed()
+{
+	if (APlayerCharacter* PC = Cast<APlayerCharacter>(GetPawn()))
+	{
+		if (PC->IsSwimmingActive())
+		{
+			PC->SetSwimSurfaceHeld(true);
+		}
+	}
+}
+
+void ABTZPlayerController::SwimSurfaceReleased()
+{
+	if (APlayerCharacter* PC = Cast<APlayerCharacter>(GetPawn()))
+	{
+		PC->SetSwimSurfaceHeld(false);
+	}
 }
 void ABTZPlayerController::Interact()
 {

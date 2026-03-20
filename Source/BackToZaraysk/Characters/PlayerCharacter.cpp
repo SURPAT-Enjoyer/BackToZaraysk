@@ -15,6 +15,8 @@
 #include "Animation/AnimBlueprintGeneratedClass.h"
 #include "GameFramework/PlayerController.h"
 #include "Curves/CurveFloat.h"
+#include "WaterSubsystem.h"
+#include "WaterBodyComponent.h"
 
 APlayerCharacter::APlayerCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -84,10 +86,20 @@ void APlayerCharacter::MoveForward(float Value)
 			// Во время стрейфа полностью блокируем обычное движение
 			return;
 		}
-		
-		FRotator YawRotator(0.0f, GetControlRotation().Yaw, 0.0f);
-		FVector ForwardVector = YawRotator.RotateVector(FVector::ForwardVector);
-		AddMovementInput(ForwardVector, Value);
+
+		// While swimming: move in full camera direction (with pitch) in 3D.
+		if (bSwimmingActive)
+		{
+			const FRotator ControlRot = GetControlRotation();
+			const FVector Forward = ControlRot.Vector().GetSafeNormal();
+			AddMovementInput(Forward, Value);
+		}
+		else
+		{
+			FRotator YawRotator(0.0f, GetControlRotation().Yaw, 0.0f);
+			FVector ForwardVector = YawRotator.RotateVector(FVector::ForwardVector);
+			AddMovementInput(ForwardVector, Value);
+		}
 	}
 }
 
@@ -107,10 +119,20 @@ void APlayerCharacter::MoveRight(float Value)
 			// Во время стрейфа полностью блокируем обычное движение
 			return;
 		}
-		
-		FRotator YawRotator(0.0f, GetControlRotation().Yaw, 0.0f);
-		FVector RightVector = YawRotator.RotateVector(FVector::RightVector);
-		AddMovementInput(RightVector, Value);
+
+		if (bSwimmingActive)
+		{
+			const FRotator ControlRot = GetControlRotation();
+			const FVector Forward = ControlRot.Vector().GetSafeNormal();
+			const FVector Right = FVector::CrossProduct(FVector::UpVector, Forward).GetSafeNormal(); // right-handed
+			AddMovementInput(Right, Value);
+		}
+		else
+		{
+			FRotator YawRotator(0.0f, GetControlRotation().Yaw, 0.0f);
+			FVector RightVector = YawRotator.RotateVector(FVector::RightVector);
+			AddMovementInput(RightVector, Value);
+		}
 	}
 }
 void APlayerCharacter::Turn(float Value)
@@ -245,7 +267,135 @@ void APlayerCharacter::BeginPlay()
 }
 void APlayerCharacter::Tick(float DeltaTime)
 {
+	Super::Tick(DeltaTime);
 	CameraMoveTimeline.TickTimeline(DeltaTime);
+
+	// === Swimming detection via Water plugin (no PhysicsVolume) ===
+	if (bEnableSwimming)
+	{
+		UWorld* World = GetWorld();
+		UWaterSubsystem* WaterSubsystem = World ? UWaterSubsystem::GetWaterSubsystem(World) : nullptr;
+
+		bool bInAnyWater = false;
+		float WaterSurfaceZ = 0.0f;
+		float ImmersionDepth = 0.0f;
+
+		if (WaterSubsystem && UWaterSubsystem::GetWaterBodyManager(World))
+		{
+			const FVector QueryLoc = GetActorLocation();
+
+			float BestImmersion = 0.0f;
+			float BestSurfaceZ = 0.0f;
+
+			UWaterSubsystem::GetWaterBodyManager(World)->ForEachWaterBodyComponent([&](UWaterBodyComponent* Comp)
+			{
+				if (!Comp) return true;
+				const FWaterBodyQueryResult R = Comp->QueryWaterInfoClosestToWorldLocation(
+					QueryLoc,
+					EWaterBodyQueryFlags::ComputeLocation | EWaterBodyQueryFlags::ComputeImmersionDepth | EWaterBodyQueryFlags::IncludeWaves
+				);
+				const float D = R.GetImmersionDepth();
+				if (D > BestImmersion)
+				{
+					BestImmersion = D;
+					BestSurfaceZ = R.GetWaterSurfaceLocation().Z;
+				}
+				return true;
+			});
+
+			if (BestImmersion > 0.0f)
+			{
+				bInAnyWater = true;
+				ImmersionDepth = BestImmersion;
+				WaterSurfaceZ = BestSurfaceZ;
+			}
+		}
+
+		// Chest-deep check: water surface above chest socket
+		bool bChestDeep = false;
+		float ChestZ = 0.0f;
+		if (USkeletalMeshComponent* Skel = GetMesh())
+		{
+			if (Skel->DoesSocketExist(ChestSocketName))
+			{
+				ChestZ = Skel->GetSocketLocation(ChestSocketName).Z;
+			}
+		}
+		if (ChestZ <= 0.0f)
+		{
+			// Fallback: approximate chest around capsule center + 20cm
+			if (UCapsuleComponent* Cap = GetCapsuleComponent())
+			{
+				ChestZ = GetActorLocation().Z + 20.0f;
+			}
+			else
+			{
+				ChestZ = GetActorLocation().Z + 20.0f;
+			}
+		}
+		if (bInAnyWater && WaterSurfaceZ > ChestZ)
+		{
+			bChestDeep = true;
+		}
+
+		UBTZBaseCharMovementComponent* Move = Cast<UBTZBaseCharMovementComponent>(GetCharacterMovement());
+		const bool bShouldSwim = bInAnyWater && bChestDeep;
+
+		if (bShouldSwim && !bSwimmingActive)
+		{
+			bSwimmingActive = true;
+			LastWaterSurfaceZ = WaterSurfaceZ;
+			bLastWasInAnyWater = true;
+
+			if (Move)
+			{
+				Move->EnterSwimmingCapsule();
+				// Use full 3D movement while in water (no PhysicsVolume): MOVE_Flying behaves like swimming for controls.
+				SavedGravityScale = Move->GravityScale;
+				Move->GravityScale = 0.0f;
+				Move->SetMovementMode(MOVE_Flying);
+			}
+		}
+		else if (!bShouldSwim && bSwimmingActive)
+		{
+			bSwimmingActive = false;
+			LastWaterSurfaceZ = WaterSurfaceZ;
+			bLastWasInAnyWater = bInAnyWater;
+
+			if (Move)
+			{
+				Move->ExitSwimmingCapsule();
+				Move->GravityScale = SavedGravityScale;
+				// Restore to walking if grounded, otherwise falling
+				Move->SetMovementMode(Move->IsMovingOnGround() ? MOVE_Walking : MOVE_Falling);
+			}
+		}
+		else
+		{
+			LastWaterSurfaceZ = WaterSurfaceZ;
+			bLastWasInAnyWater = bInAnyWater;
+		}
+
+		// Dive / surface controls (Ctrl / Space) while swimming
+		if (bSwimmingActive && Move && Move->MovementMode == MOVE_Flying)
+		{
+			float ZInput = 0.0f;
+			if (bSwimSurfaceHeld) ZInput += 1.0f;
+			if (bSwimDiveHeld) ZInput -= 1.0f;
+
+			// Passive buoyancy (when player isn't explicitly controlling vertical movement)
+			if (FMath::IsNearlyZero(ZInput) && !FMath::IsNearlyZero(Buoyancy))
+			{
+				// Constant buoyancy (no increase with depth)
+				ZInput += Buoyancy * 0.5f;
+			}
+
+			if (!FMath::IsNearlyZero(ZInput))
+			{
+				AddMovementInput(FVector::UpVector, ZInput * SwimVerticalInputScale);
+			}
+		}
+	}
 	
 	// КРИТИЧЕСКИ ВАЖНО: НЕ обновляем камеру во время лазания!
 	if (!ObstacleClimbingComponent || !ObstacleClimbingComponent->bIsClimbing)

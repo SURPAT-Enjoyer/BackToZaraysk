@@ -58,6 +58,20 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure)
 	FORCEINLINE float GetIKRightFootOffset() const { return IKRightFootOffset; }
 
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="IK Settings")
+	FORCEINLINE bool HadLastFootHit(bool bLeft) const { return bLeft ? bLastLeftFootHadHit : bLastRightFootHadHit; }
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="IK Settings")
+	FORCEINLINE float GetLastFootHitZ(bool bLeft) const { return bLeft ? LastLeftFootHitZ : LastRightFootHitZ; }
+
+	// Stable foot trace origin used for Foot IK (world space).
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="IK Settings")
+	FVector GetFootTraceOriginWorld(bool bLeft) const;
+
+	// Включает отладочный вывод: какой AnimInstance/ABP реально используется и какие IK оффсеты считаются.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="IK Settings|Debug")
+	bool bDebugFootIK = false;
+
 
 	//UPROPERTY(BlueprintReadOnly, Transient, DuplicateTransient, Category = MovementComponent)
 	//TObjectPtr<USceneComponent> UpdatedComponent;
@@ -135,7 +149,61 @@ protected:
 	float IKTraceDistance = 0.0f;
 	float IKScale = 0.0f;
 
-	float GetIKOffsetForASocket(const FName& SocketName);
+	// Foot IK trace origin baseline (stable Z from capsule, XY from foot).
+	// Lateral offsets help when foot bone is centered.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(AllowPrivateAccess="true"))
+	float FootTraceForwardOffsetCm = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(AllowPrivateAccess="true"))
+	float FootTraceLateralOffsetCm = 0.0f; // applied as -Y for left, +Y for right
+
+	// Z baseline: distance above capsule bottom to place trace origin.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="0.0", UIMin="0.0", AllowPrivateAccess="true"))
+	float FootTraceBaseAboveCapsuleBottomCm = 0.0f;
+
+	// Additional offset from the foot socket towards the "bottom of the foot" (cm).
+	// Used when computing trace origin on the mesh surface.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="0.0", UIMin="0.0", AllowPrivateAccess="true"))
+	float FootTraceSocketToFootBottomOffsetCm = 0.0f;
+
+	// When the trace origin is inside collision (foot clipping),
+	// we bias the IK result upwards by this amount to resolve penetration.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="0.0", UIMin="0.0", AllowPrivateAccess="true"))
+	float FootPenetrationResolveLiftCm = 2.0f;
+
+	// Radius for the overlap test that detects whether foot origin is inside collision.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="0.1", UIMin="0.1", AllowPrivateAccess="true"))
+	float FootPenetrationTestRadiusCm = 1.5f;
+
+	// If the computed foot offset is within +/- this value (cm),
+	// treat it as FLAT and suppress micro jitter.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="0.0", UIMin="0.0", AllowPrivateAccess="true"))
+	float FootFlatOffsetEpsilonCm = 6.0f;
+
+	// FLAT suppression is only applied when the contact point (HitZ) is stable
+	// frame-to-frame. This prevents killing legitimate small offsets on steps.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="0.0", UIMin="0.0", AllowPrivateAccess="true"))
+	float FootFlatHitZDeltaEpsilonCm = 2.0f;
+
+	// While moving onto/over a step, we don't want FLAT to kill the step reaction.
+	// So we only apply FLAT when the character is nearly stopped.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="0.0", UIMin="0.0", AllowPrivateAccess="true"))
+	float FootFlatMaxSpeedCmPerSec = 10.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="0.0", UIMin="0.0", AllowPrivateAccess="true"))
+	float FootTraceStartAboveCm = 25.0f;
+
+	// Last ground hit Z per foot (world space)
+	UPROPERTY(BlueprintReadOnly, Category="IK Settings")
+	float LastLeftFootHitZ = 0.0f;
+	UPROPERTY(BlueprintReadOnly, Category="IK Settings")
+	float LastRightFootHitZ = 0.0f;
+	UPROPERTY(BlueprintReadOnly, Category="IK Settings")
+	bool bLastLeftFootHadHit = false;
+	UPROPERTY(BlueprintReadOnly, Category="IK Settings")
+	bool bLastRightFootHadHit = false;
+
+	float GetIKOffsetForFoot(bool bLeft);
 	void UpdateAnimationBlueprintIK();
 
 private:

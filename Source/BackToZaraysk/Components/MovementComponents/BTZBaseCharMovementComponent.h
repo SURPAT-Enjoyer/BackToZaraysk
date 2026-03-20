@@ -21,6 +21,14 @@ public:
 	bool IsProning();
 	bool bIsProning = false;
 
+	// Swim capsule resize (uses prone capsule dimensions, but does NOT enable prone movement state)
+	UFUNCTION(BlueprintCallable, Category="Character|Movement|Swimming")
+	void EnterSwimmingCapsule();
+	UFUNCTION(BlueprintCallable, Category="Character|Movement|Swimming")
+	void ExitSwimmingCapsule();
+	UFUNCTION(BlueprintCallable, Category="Character|Movement|Swimming")
+	bool IsSwimmingCapsuleActive() const { return bSwimmingCapsuleActive; }
+
 	virtual float GetMaxSpeed() const override;
 	virtual bool CanAttemptJump() const override;
 	void StartSprint();
@@ -72,6 +80,9 @@ protected:
 private:
 	bool bIsOutOfStamina;
 	bool bIsSprinting;
+
+	bool bSwimmingCapsuleActive = false;
+	float SwimmingMeshAppliedLift = 0.0f;
 
     // Extra mesh vertical offset (added on top of capsule half-height delta) for prone
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Character movement|Prone", meta = (AllowPrivateAccess = "true"))

@@ -78,6 +78,27 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="IK Settings")
 	float FootIKBlendSpeed = 8.0f;
 
+	// === Swimming ===
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Swimming")
+	bool bEnableSwimming = true;
+
+	// Сокет, по которому проверяем "по грудь" (если отсутствует, используем капсулу)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Swimming")
+	FName ChestSocketName = FName(TEXT("spine_03"));
+
+	// Вертикальная скорость при нырянии/всплытии (см/с, задаётся как input scale)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Swimming", meta=(ClampMin="0.0", UIMin="0.0"))
+	float SwimVerticalInputScale = 1.0f;
+
+	// Плавучесть персонажа: -1 тонет, 0 нейтрально, 1 всплывает (пока не используется)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Swimming", meta=(ClampMin="-1.0", ClampMax="1.0", UIMin="-1.0", UIMax="1.0"))
+	float Buoyancy = 0.0f;
+
+	// Управление нырянием/всплытием (устанавливается контроллером по клавишам)
+	void SetSwimDiveHeld(bool bHeld) { bSwimDiveHeld = bHeld; }
+	void SetSwimSurfaceHeld(bool bHeld) { bSwimSurfaceHeld = bHeld; }
+	bool IsSwimmingActive() const { return bSwimmingActive; }
+
 	// IK переменные для Blueprint доступа (наследуются из базового класса)
 	// Удалено дублирование - используем GetIKLeftFootOffset() и GetIKRightFootOffset()
 
@@ -152,6 +173,14 @@ private:
     float CurrentLeanAngleDeg = 0.0f;
     UPROPERTY(BlueprintReadOnly, Category="Lean", meta=(AllowPrivateAccess="true"))
     float CurrentLeanSideOffset = 0.0f;
+
+	// Swimming runtime state
+	bool bSwimmingActive = false;
+	bool bSwimDiveHeld = false;
+	bool bSwimSurfaceHeld = false;
+	float LastWaterSurfaceZ = 0.0f;
+	bool bLastWasInAnyWater = false;
+	float SavedGravityScale = 1.0f;
 
 
 	

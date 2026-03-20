@@ -39,7 +39,7 @@ float UBTZBaseCharMovementComponent::GetMaxSpeed() const
 
 bool UBTZBaseCharMovementComponent::CanAttemptJump() const
 {
-	if (bIsOutOfStamina || bIsProning)
+	if (bIsOutOfStamina || bIsProning || MovementMode == MOVE_Swimming || MovementMode == MOVE_Flying)
 	{
 		return false;
 	}
@@ -47,6 +47,109 @@ bool UBTZBaseCharMovementComponent::CanAttemptJump() const
 	{
 		return Super::CanAttemptJump();
 	}
+}
+
+void UBTZBaseCharMovementComponent::EnterSwimmingCapsule()
+{
+	if (bSwimmingCapsuleActive)
+	{
+		return;
+	}
+
+	UCapsuleComponent* Capsule = GetCharacterOwner() ? GetCharacterOwner()->GetCapsuleComponent() : nullptr;
+	if (!Capsule)
+	{
+		return;
+	}
+
+	const float OldHalf = Capsule->GetUnscaledCapsuleHalfHeight();
+	Capsule->SetCapsuleSize(ProneCapsuleRadius, ProneCapsuleHalfHeight, true);
+
+	const float HalfDelta = ProneCapsuleHalfHeight - OldHalf; // unscaled delta
+	const float ScaledHalfDelta = HalfDelta * Capsule->GetShapeScale();
+	if (!FMath::IsNearlyZero(ScaledHalfDelta))
+	{
+		FHitResult Hit;
+		const FVector Offset = FVector(0.f, 0.f, ScaledHalfDelta);
+		MoveUpdatedComponent(Offset, UpdatedComponent->GetComponentQuat(), true, &Hit);
+	}
+
+	// Lift mesh similarly to prone to avoid clipping
+	if (ACharacter* Character = GetCharacterOwner())
+	{
+		if (USkeletalMeshComponent* Mesh = Character->GetMesh())
+		{
+			const float MeshLift = (OldHalf - ProneCapsuleHalfHeight) + ProneMeshExtraZOffset; // positive when shrinking
+			if (!FMath::IsNearlyZero(MeshLift))
+			{
+				FVector RelLoc = Mesh->GetRelativeLocation();
+				RelLoc.Z += MeshLift;
+				Mesh->SetRelativeLocation(RelLoc);
+				SwimmingMeshAppliedLift = MeshLift;
+			}
+		}
+	}
+
+	bSwimmingCapsuleActive = true;
+}
+
+void UBTZBaseCharMovementComponent::ExitSwimmingCapsule()
+{
+	if (!bSwimmingCapsuleActive)
+	{
+		return;
+	}
+
+	UCapsuleComponent* Capsule = GetCharacterOwner() ? GetCharacterOwner()->GetCapsuleComponent() : nullptr;
+	if (!Capsule)
+	{
+		bSwimmingCapsuleActive = false;
+		return;
+	}
+
+	// Restore capsule to crouch or standing dimensions keeping capsule bottom at same height
+	const float OldHalf = Capsule->GetUnscaledCapsuleHalfHeight();
+	float TargetRadius = Capsule->GetUnscaledCapsuleRadius();
+	float TargetHalf = OldHalf;
+
+	if (IsCrouching())
+	{
+		TargetRadius = Capsule->GetUnscaledCapsuleRadius();
+		TargetHalf = GetCrouchedHalfHeight();
+	}
+	else
+	{
+		TargetRadius = DefaultCapsuleRadius;
+		TargetHalf = DefaultCapsuleHalfHeight;
+	}
+
+	Capsule->SetCapsuleSize(TargetRadius, TargetHalf, true);
+
+	const float HalfDelta = TargetHalf - OldHalf; // unscaled delta
+	const float ScaledHalfDelta = HalfDelta * Capsule->GetShapeScale();
+	if (!FMath::IsNearlyZero(ScaledHalfDelta) && UpdatedComponent)
+	{
+		FHitResult Hit;
+		const FVector Offset = FVector(0.f, 0.f, ScaledHalfDelta);
+		MoveUpdatedComponent(Offset, UpdatedComponent->GetComponentQuat(), true, &Hit);
+	}
+
+	// Restore mesh lift applied on enter
+	if (ACharacter* Character = GetCharacterOwner())
+	{
+		if (USkeletalMeshComponent* Mesh = Character->GetMesh())
+		{
+			if (!FMath::IsNearlyZero(SwimmingMeshAppliedLift))
+			{
+				FVector RelLoc = Mesh->GetRelativeLocation();
+				RelLoc.Z -= SwimmingMeshAppliedLift;
+				Mesh->SetRelativeLocation(RelLoc);
+				SwimmingMeshAppliedLift = 0.0f;
+			}
+		}
+	}
+
+	bSwimmingCapsuleActive = false;
 }
 
 void UBTZBaseCharMovementComponent::StartSprint()

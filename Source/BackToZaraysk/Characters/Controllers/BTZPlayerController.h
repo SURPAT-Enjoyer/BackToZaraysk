@@ -58,6 +58,12 @@ private:
     void FreeLookX(float Value);
     void FreeLookY(float Value);
 
+	// Swimming vertical control (only when swimming is active)
+	void SwimDivePressed();
+	void SwimDiveReleased();
+	void SwimSurfacePressed();
+	void SwimSurfaceReleased();
+
 	TSoftObjectPtr<class ABTZBaseCharacter> CachedBaseCharacter;
 
     // Переменные для свободного вращения головы персонажа
