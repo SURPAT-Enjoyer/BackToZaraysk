@@ -230,6 +230,18 @@ public:
 };
 
 /**
+ * Данные базового пояса (BeltBase)
+ */
+UCLASS(BlueprintType, Blueprintable, meta=(DisplayName="Belt Base Item Data"))
+class BACKTOZARAYSK_API UBeltBaseItemData : public UEquippableItemData
+{
+    GENERATED_BODY()
+
+public:
+    UBeltBaseItemData();
+};
+
+/**
  * Данные бронежилета 3x3 (без доп. хранилищ)
  */
 UCLASS(BlueprintType, Blueprintable, meta=(DisplayName="Armor Base Item Data"))

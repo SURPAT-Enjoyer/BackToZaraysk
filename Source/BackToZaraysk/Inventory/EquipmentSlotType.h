@@ -12,6 +12,7 @@ enum EEquipmentSlotType : uint8
     None            UMETA(DisplayName = "Нет"),
     Helmet          UMETA(DisplayName = "Шлем"),
     Vest            UMETA(DisplayName = "Разгрузка"),  // Разгрузочный жилет
+    Belt            UMETA(DisplayName = "Пояс"),
     Backpack        UMETA(DisplayName = "Рюкзак"),
     PrimaryWeapon   UMETA(DisplayName = "Основное оружие"),
     SecondaryWeapon UMETA(DisplayName = "Запасное оружие"),

@@ -30,8 +30,8 @@ public:
 
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void Draw(FViewport* InViewport, FCanvas* Canvas) override;
-	virtual bool InputKey(FViewport* InViewport, int32 ControllerId, FKey Key, EInputEvent Event, float AmountDepressed, bool bGamepad) override;
-	virtual bool InputAxis(FViewport* InViewport, int32 ControllerId, FKey Key, float Delta, float DeltaTime, int32 NumSamples, bool bGamepad) override;
+	virtual bool InputKey(const FInputKeyEventArgs& EventArgs) override;
+	virtual bool InputAxis(const FInputKeyEventArgs& EventArgs) override;
 
 	void SetWorkingOrigin(const FVector& Origin) { WorkingOrigin = Origin; SyncWorkingCopyToPreview(); }
 	FVector GetWorkingOrigin() const { return WorkingOrigin; }

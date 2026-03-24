@@ -68,6 +68,10 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="IK Settings")
 	FVector GetFootTraceOriginWorld(bool bLeft) const;
 
+	/** True while feet are treated as stair/uneven (sticky hysteresis — avoids gate/smoothing flicker). */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="IK Settings")
+	FORCEINLINE bool IsFootIKStairLike() const { return bFootIKStairSticky; }
+
 	// Включает отладочный вывод: какой AnimInstance/ABP реально используется и какие IK оффсеты считаются.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="IK Settings|Debug")
 	bool bDebugFootIK = false;
@@ -130,6 +134,39 @@ protected:
     UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Player Character IK", meta = (ClampMin = 0.0f, UIMin = 0.0f, AllowPrivateAccess = "true"))
 	float IKInterpSpeed = 20.0f;
 
+	// When horizontal speed exceeds this, IK offsets follow traces more slowly (reduces run jitter).
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="0.0", UIMin="0.0", AllowPrivateAccess="true"))
+	float RunIKSmoothSpeedThreshold = 240.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="0.05", ClampMax="1.0", UIMin="0.1", UIMax="1.0", AllowPrivateAccess="true"))
+	float RunIKInterpSpeedScale = 0.32f;
+
+	// Множитель к IKInterpSpeed в покое на ровной земле (меньше — меньше дёрганья, но медленнее к цели).
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="0.05", ClampMax="1.0", UIMin="0.1", UIMax="0.6", AllowPrivateAccess="true"))
+	float FootIKIdleInterpMul = 0.3f;
+
+	// В покое на ступеньках/разном уровне ног — почти полная скорость, иначе стопа «не догоняет» raw (висит над ступенькой).
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="0.2", ClampMax="1.0", UIMin="0.5", UIMax="1.0", AllowPrivateAccess="true"))
+	float FootIKIdleInterpMulStairs = 0.92f;
+
+	// If |raw left IK - raw right IK| exceeds this (cm), treat as stairs / uneven feet (full IK responsiveness).
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="4.0", UIMin="6.0", AllowPrivateAccess="true"))
+	float StairFeetRawDeltaCm = 8.0f;
+
+	// Also treat as stair-like when one foot has large |raw| and feet disagree (catches 13.8 vs 14 threshold gaps).
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="2.0", UIMin="4.0", AllowPrivateAccess="true"))
+	float StairAsymmetricMinRawDeltaCm = 3.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="4.0", UIMin="6.0", AllowPrivateAccess="true"))
+	float StairAsymmetricSingleFootAbsCm = 9.0f;
+
+	// Hysteresis exit: both feet nearly neutral — then leave stair IK mode (prevents run twitch from borderline raw noise).
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="2.0", UIMin="3.0", AllowPrivateAccess="true"))
+	float StairIKExitMaxFootAbsCm = 5.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="1.0", UIMin="2.0", AllowPrivateAccess="true"))
+	float StairIKExitMaxDeltaCm = 4.0f;
+
     //ABTZBaseCharacter* CharacterOwner;
 
     virtual bool CanSprint();
@@ -161,6 +198,14 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="0.0", UIMin="0.0", AllowPrivateAccess="true"))
 	float FootTraceBaseAboveCapsuleBottomCm = 0.0f;
 
+	// Below this horizontal speed (cm/s) trace Z stays stabilized (capsule/foot max) to reduce idle bob.
+	// Above FootTraceZPerFootBlendEndSpeed, trace Z follows each foot independently (stops sync leg bounce when IK is on).
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="0.0", UIMin="0.0", AllowPrivateAccess="true"))
+	float FootTraceZPerFootBlendStartSpeed = 12.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="1.0", UIMin="5.0", AllowPrivateAccess="true"))
+	float FootTraceZPerFootBlendEndSpeed = 48.0f;
+
 	// Additional offset from the foot socket towards the "bottom of the foot" (cm).
 	// Used when computing trace origin on the mesh surface.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="0.0", UIMin="0.0", AllowPrivateAccess="true"))
@@ -190,6 +235,10 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="0.0", UIMin="0.0", AllowPrivateAccess="true"))
 	float FootFlatMaxSpeedCmPerSec = 10.0f;
 
+	// If foot bone is this much above capsule baseline (cm), do not FLAT-zero (one foot on step, other low).
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="0.0", UIMin="0.0", AllowPrivateAccess="true"))
+	float FootFlatSkipFootElevAboveCapsuleCm = 6.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="IK Settings", meta=(ClampMin="0.0", UIMin="0.0", AllowPrivateAccess="true"))
 	float FootTraceStartAboveCm = 25.0f;
 
@@ -208,4 +257,5 @@ protected:
 
 private:
 	bool bIsSprintRequested = false;
+	bool bFootIKStairSticky = false;
 };

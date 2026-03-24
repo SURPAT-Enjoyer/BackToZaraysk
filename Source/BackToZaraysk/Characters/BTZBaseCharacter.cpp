@@ -141,16 +141,71 @@ void ABTZBaseCharacter::Tick(float DeltaTime)
 	// Получаем сырые смещения
 	float RawLeftOffset = GetIKOffsetForFoot(true);
 	float RawRightOffset = GetIKOffsetForFoot(false);
+
+	// Idle settle on flat ground:
+	// when character is almost stopped and both feet are near-flat, steer offsets to zero
+	// so post-move pose returns to the same neutral idle placement.
+	if (bIsOnGround && !bIsMoving)
+	{
+		const bool bNearFlatLeft = FMath::Abs(RawLeftOffset) <= 6.0f;
+		const bool bNearFlatRight = FMath::Abs(RawRightOffset) <= 6.0f;
+		const bool bFeetLevel = FMath::Abs(RawLeftOffset - RawRightOffset) <= 3.0f;
+		if (bNearFlatLeft && bNearFlatRight && bFeetLevel)
+		{
+			RawLeftOffset = 0.0f;
+			RawRightOffset = 0.0f;
+		}
+	}
+
+	const float RawDeltaAfterIdle = FMath::Abs(RawLeftOffset - RawRightOffset);
+	const float MaxAbsRawAfterIdle = FMath::Max(FMath::Abs(RawLeftOffset), FMath::Abs(RawRightOffset));
+
+	const bool bInstantStairIK = bIsOnGround && (RawDeltaAfterIdle >= StairFeetRawDeltaCm
+		|| (MaxAbsRawAfterIdle >= StairAsymmetricSingleFootAbsCm && RawDeltaAfterIdle >= StairAsymmetricMinRawDeltaCm));
+	if (!bIsOnGround)
+	{
+		bFootIKStairSticky = false;
+	}
+	else
+	{
+		if (bInstantStairIK)
+		{
+			bFootIKStairSticky = true;
+		}
+		else if (MaxAbsRawAfterIdle < StairIKExitMaxFootAbsCm && RawDeltaAfterIdle < StairIKExitMaxDeltaCm)
+		{
+			bFootIKStairSticky = false;
+		}
+	}
+	const bool bStairLikeFeetTick = bFootIKStairSticky;
 	
 	// Определяем скорость интерполяции в зависимости от состояния
 	float CurrentIKSpeed;
 	if (bIsOnGround)
 	{
-		CurrentIKSpeed = bIsMoving ? IKInterpSpeed : IKInterpSpeed * 0.3f; // Медленнее когда стоит
+		if (bIsMoving)
+		{
+			CurrentIKSpeed = IKInterpSpeed;
+		}
+		else if (bStairLikeFeetTick)
+		{
+			CurrentIKSpeed = IKInterpSpeed * FootIKIdleInterpMulStairs;
+		}
+		else
+		{
+			CurrentIKSpeed = IKInterpSpeed * FootIKIdleInterpMul;
+		}
 	}
 	else
 	{
 		CurrentIKSpeed = IKInterpSpeed * 0.7f; // В воздухе тоже работает, но медленнее
+	}
+
+	const float Speed2D = GetVelocity().Size2D();
+
+	if (bIsOnGround && bIsMoving && Speed2D >= RunIKSmoothSpeedThreshold && !bStairLikeFeetTick)
+	{
+		CurrentIKSpeed *= RunIKInterpSpeedScale;
 	}
 
 	// Применяем ИК с улучшенной логикой
@@ -158,7 +213,11 @@ void ABTZBaseCharacter::Tick(float DeltaTime)
 	{
 		// На земле - применяем рассчитанные смещения
 		IKLeftFootOffset = FMath::FInterpTo(IKLeftFootOffset, RawLeftOffset, DeltaTime, CurrentIKSpeed);
-		IKRightFootOffset = FMath::FInterpTo(IKRightFootOffset, RawRightOffset, DeltaTime, CurrentIKSpeed);
+		// Right foot often shows more run jitter (asymmetry in gait/trace); smooth slightly more at sprint.
+		const bool bRunSmoothRight = bIsMoving && Speed2D >= RunIKSmoothSpeedThreshold && !bStairLikeFeetTick;
+		// Keep closer to left foot responsiveness — too much extra lag on R-only reads as twitch vs animation.
+		const float RightSpeed = bRunSmoothRight ? CurrentIKSpeed * 0.84f : CurrentIKSpeed;
+		IKRightFootOffset = FMath::FInterpTo(IKRightFootOffset, RawRightOffset, DeltaTime, RightSpeed);
 	}
 	else
 	{
@@ -241,17 +300,30 @@ void ABTZBaseCharacter::TryChangeSprintState(float DeltaTime)
 
 FVector ABTZBaseCharacter::GetFootTraceOriginWorld(bool bLeft) const
 {
-	// Trace origin anchored to the mesh foot location (pre-IK) so stairs can be detected correctly.
+	// Stable trace origin:
+	// - XY follows the foot socket (good stair edge detection)
+	// - Z comes from capsule baseline (prevents idle "dancing" on flat ground)
 	const USkeletalMeshComponent* MeshComp = GetMesh();
 	if (!MeshComp)
 	{
 		return GetActorLocation();
 	}
 
-	const FName FootName = bLeft ? LeftFootSocketName : RightFootSocketName;
+	FName FootName = bLeft ? LeftFootSocketName : RightFootSocketName;
 	if (FootName.IsNone())
 	{
 		return GetActorLocation();
+	}
+
+	// Avoid feedback loop when IK socket is used for tracing.
+	// If current trace socket is ik_foot_*, prefer the deforming foot bone for XY sampling.
+	if (FootName == FName(TEXT("ik_foot_l")))
+	{
+		FootName = FName(TEXT("foot_l"));
+	}
+	else if (FootName == FName(TEXT("ik_foot_r")))
+	{
+		FootName = FName(TEXT("foot_r"));
 	}
 
 	const FVector FootWorld = MeshComp->GetSocketLocation(FootName);
@@ -259,8 +331,31 @@ FVector ABTZBaseCharacter::GetFootTraceOriginWorld(bool bLeft) const
 	FVector Origin = FootWorld;
 	Origin.X += FootTraceForwardOffsetCm;
 	Origin.Y += (bLeft ? -FootTraceLateralOffsetCm : FootTraceLateralOffsetCm);
-	// Move down from socket to (approx) bottom of foot mesh.
-	Origin.Z -= FootTraceSocketToFootBottomOffsetCm;
+
+	// Z: blend stabilized (max capsule, foot) when nearly still vs per-foot Z when moving.
+	// If both feet always share capsule Z while walking, traces move in sync -> legs bob together with IK.
+	if (const UCapsuleComponent* CapsuleComp = GetCapsuleComponent())
+	{
+		const float CapsuleBottomZ =
+			CapsuleComp->GetComponentLocation().Z - CapsuleComp->GetScaledCapsuleHalfHeight();
+		const float CapsuleBaseZ = CapsuleBottomZ + FootTraceBaseAboveCapsuleBottomCm;
+		const float FootBasedZ = FootWorld.Z - FootTraceSocketToFootBottomOffsetCm;
+		const float ZStabilized = FMath::Max(CapsuleBaseZ, FootBasedZ);
+
+		const float Speed2D = GetVelocity().Size2D();
+		const float EndSpd = FMath::Max(FootTraceZPerFootBlendEndSpeed, FootTraceZPerFootBlendStartSpeed + 1.0f);
+		const float ZBlend = FMath::GetMappedRangeValueClamped(
+			FVector2D(FootTraceZPerFootBlendStartSpeed, EndSpd),
+			FVector2D(0.0f, 1.0f),
+			Speed2D
+		);
+		Origin.Z = FMath::Lerp(ZStabilized, FootBasedZ, ZBlend);
+	}
+	else
+	{
+		// Fallback: preserve old behavior if capsule is unavailable.
+		Origin.Z = FootWorld.Z - FootTraceSocketToFootBottomOffsetCm;
+	}
 	return Origin;
 }
 
@@ -272,14 +367,24 @@ float ABTZBaseCharacter::GetIKOffsetForFoot(bool bLeft)
 	FVector OriginWorld = GetFootTraceOriginWorld(bLeft);
 	float FootSocketZ = OriginWorld.Z;
 
-	// For debug: actual socket Z (before subtracting FootTraceSocketToFootBottomOffsetCm).
+	// Ankle/foot bone Z for debug and stair UP/DOWN choice (not ik_foot — it follows IK).
 	if (USkeletalMeshComponent* MeshComp = GetMesh())
 	{
-		const FName FootName = bLeft ? LeftFootSocketName : RightFootSocketName;
-		if (!FootName.IsNone())
+		FName ElevName = bLeft ? LeftFootSocketName : RightFootSocketName;
+		if (ElevName == FName(TEXT("ik_foot_l"))) ElevName = FName(TEXT("foot_l"));
+		else if (ElevName == FName(TEXT("ik_foot_r"))) ElevName = FName(TEXT("foot_r"));
+		if (!ElevName.IsNone())
 		{
-			FootSocketZ = MeshComp->GetSocketLocation(FootName).Z;
+			FootSocketZ = MeshComp->GetSocketLocation(ElevName).Z;
 		}
+	}
+
+	float FootElevVsCapsuleCm = 0.0f;
+	if (const UCapsuleComponent* CapElev = GetCapsuleComponent())
+	{
+		const float CapB = CapElev->GetComponentLocation().Z - CapElev->GetScaledCapsuleHalfHeight();
+		const float CapBaseZ = CapB + FootTraceBaseAboveCapsuleBottomCm;
+		FootElevVsCapsuleCm = FootSocketZ - CapBaseZ;
 	}
 
     // ИСПРАВЛЕНО: Оптимизированная трассировка для лучшего обнаружения земли
@@ -412,7 +517,24 @@ float ABTZBaseCharacter::GetIKOffsetForFoot(bool bLeft)
 		{
 			if (bHitDown && bHitUp)
 			{
-				bChooseUp = FMath::Abs(RawUp) < FMath::Abs(RawDown);
+				// On stairs the raised foot needs the contact closest to the trace plane, not always DOWN.
+				const float Speed2D = GetVelocity().Size2D();
+				const bool bIsMovingNow = Speed2D > 25.0f;
+				const bool bFootRaisedOnStair = FootElevVsCapsuleCm > 10.0f;
+				if (bIsMovingNow && !bFootRaisedOnStair)
+				{
+					bChooseUp = false;
+				}
+				else if (!bIsMovingNow && !bFootRaisedOnStair)
+				{
+					// Стоим на месте, стопа не «высоко» на ступеньке: DOWN даёт опору пола под ногой.
+					// Иначе min(|Up|,|Down|) часто цепляет торец/низ ступеньки — нога уходит на мыски.
+					bChooseUp = false;
+				}
+				else
+				{
+					bChooseUp = FMath::Abs(RawUp) < FMath::Abs(RawDown);
+				}
 			}
 			else if (bHitUp && !bHitDown)
 			{
@@ -446,7 +568,8 @@ float ABTZBaseCharacter::GetIKOffsetForFoot(bool bLeft)
 				bPrevHadHit &&
 				FMath::Abs(ChosenHitZ - PrevHitZ) <= FootFlatHitZDeltaEpsilonCm;
 
-			if (!bIsPenetrating && bIsNearlyStopped && bOffsetSmall && bHitStable)
+			const bool bSkipFlatRaisedFoot = FootElevVsCapsuleCm > FootFlatSkipFootElevAboveCapsuleCm;
+			if (!bIsPenetrating && bIsNearlyStopped && bOffsetSmall && bHitStable && !bSkipFlatRaisedFoot)
 			{
 				ChosenRawOffset = 0.0f;
 			}
@@ -481,9 +604,9 @@ float ABTZBaseCharacter::GetIKOffsetForFoot(bool bLeft)
 
 		Result = ChosenRawOffset;
 
-        // Clamp result to reasonable bounds (cm). Larger range makes IK more visible,
-        // but extreme values still cause bad knee angles.
-        Result = FMath::Clamp(Result, -45.0f, 45.0f);
+        // Clamp result to reasonable bounds (cm).
+        // Slightly wider range helps full step response on medium/high stairs.
+        Result = FMath::Clamp(Result, -60.0f, 60.0f);
 
 		if (bDebugFootIK && GEngine)
 		{

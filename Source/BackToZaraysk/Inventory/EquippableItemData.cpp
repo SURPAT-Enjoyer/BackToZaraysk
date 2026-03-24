@@ -9,6 +9,7 @@
 #include "BackToZaraysk/GameData/Items/VestBase.h"
 #include "BackToZaraysk/GameData/Items/Test/PickupBackpack.h"
 #include "BackToZaraysk/GameData/Items/BackpackBase.h"
+#include "BackToZaraysk/GameData/Items/BeltBase.h"
 #include "BackToZaraysk/GameData/Items/ArmorBase.h"
 #include "BackToZaraysk/GameData/Items/BulletproofVestBege.h"
 
@@ -337,6 +338,39 @@ UBackpackBaseItemData::UBackpackBaseItemData()
     RelativeTransform = FTransform(
         FRotator(0.0f, 0.0f, 0.0f),
         FVector(0.0f, 0.0f, 0.0f),
+        FVector(1.0f, 1.0f, 1.0f)
+    );
+}
+
+UBeltBaseItemData::UBeltBaseItemData()
+{
+    DisplayName = FText::FromString(TEXT("Пояс"));
+    SizeInCellsX = 2;
+    SizeInCellsY = 1;
+    EquipmentSlot = Belt;
+    bRotatable = false;
+
+    bHasAdditionalStorage = true;
+    AdditionalGridSize = FIntPoint(4, 2);
+    AdditionalGrids = { FIntPoint(4, 2) };
+    AdditionalGridOffsets = { FIntPoint(0, 0) };
+
+    // Базовый визуал: небольшой прямоугольный параллелепипед
+    const FString MeshPath = TEXT("/Engine/BasicShapes/Cube.Cube");
+    EquippedMesh = LoadObject<UStaticMesh>(nullptr, *MeshPath);
+    if (!EquippedMesh || !EquippedMesh->IsValidLowLevel())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("UBeltBaseItemData: Failed to load EquippedMesh from path: %s"), *MeshPath);
+        EquippedMesh = nullptr;
+    }
+
+    AttachSocketName = FName(TEXT("spine_01"));
+    PickupActorClass = ABeltBase::StaticClass();
+    Icon = nullptr;
+
+    RelativeTransform = FTransform(
+        FRotator(0.0f, 0.0f, 0.0f),
+        FVector(0.0f, 0.0f, -6.0f),
         FVector(1.0f, 1.0f, 1.0f)
     );
 }

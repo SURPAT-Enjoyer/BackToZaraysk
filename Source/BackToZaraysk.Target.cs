@@ -8,8 +8,9 @@ public class BackToZarayskTarget : TargetRules
 	public BackToZarayskTarget( TargetInfo Target) : base(Target)
 	{
 		Type = TargetType.Game;
-		DefaultBuildSettings = BuildSettingsVersion.V2;
-		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_1;
+		DefaultBuildSettings = BuildSettingsVersion.V6;
+		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_7;
+		CppStandard = CppStandardVersion.Cpp20;
 		ExtraModuleNames.Add("BackToZaraysk");
 	}
 }

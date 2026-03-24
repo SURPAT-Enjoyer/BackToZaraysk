@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#if WITH_EDITOR
 #include "ArmorBaseDetailsCustomization.h"
 #include "BackToZaraysk/GameData/Items/EquipmentBase.h"
 #include "DetailCategoryBuilder.h"
@@ -45,5 +46,6 @@ FReply FArmorBaseDetailsCustomization::OnEditModGridsClicked()
 	}
 	return FReply::Handled();
 }
+#endif // WITH_EDITOR
 
 #undef LOCTEXT_NAMESPACE

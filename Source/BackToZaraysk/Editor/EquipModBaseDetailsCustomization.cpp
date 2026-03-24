@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#if WITH_EDITOR
 #include "EquipModBaseDetailsCustomization.h"
 #include "BackToZaraysk/GameData/Items/EquipModBase.h"
 #include "DetailCategoryBuilder.h"
@@ -43,5 +44,6 @@ FReply FEquipModBaseDetailsCustomization::OnEditAttachmentGridClicked()
 		FEquipModGridEditorWindow::OpenWindow(EquipMod);
 	return FReply::Handled();
 }
+#endif // WITH_EDITOR
 
 #undef LOCTEXT_NAMESPACE

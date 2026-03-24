@@ -184,6 +184,12 @@ public:
     class UBorder* HelmetSlotRef = nullptr; // Ссылка на слот "голова"
     UPROPERTY()
     class UInventoryItemWidget* HelmetItemWidgetRef = nullptr; // Ссылка на виджет предмета в слоте головы
+
+    // Слот пояса
+    UPROPERTY()
+    class UBorder* BeltSlotRef = nullptr; // Ссылка на слот "пояс"
+    UPROPERTY()
+    class UInventoryItemWidget* BeltItemWidgetRef = nullptr; // Ссылка на виджет предмета в слоте пояса
     
     // Гриды жилета (6 отдельных гридов)
     UPROPERTY()
@@ -310,6 +316,8 @@ private:
     UPROPERTY()
     TObjectPtr<class UCanvasPanel> ArmorModWindowCanvas = nullptr;
     UPROPERTY()
+    TObjectPtr<class UViewport> ArmorModViewport = nullptr;
+    UPROPERTY()
     TObjectPtr<class UImage> ArmorModImage = nullptr;
 
     /** Актор превью 3D-модели в окне модификации. */
@@ -318,6 +326,9 @@ private:
     /** Render target для отображения 3D-превью в UImage. */
     UPROPERTY()
     TObjectPtr<class UTextureRenderTarget2D> ArmorModRenderTarget = nullptr;
+    /** UE57 migration note: материал для принудительно непрозрачного вывода RT в UImage. */
+    UPROPERTY(Transient)
+    TObjectPtr<class UMaterialInstanceDynamic> ArmorModPreviewMID = nullptr;
 
     bool bDraggingArmorModWindow = false;
     FVector2D ArmorModDragStartMouseScreen = FVector2D::ZeroVector;
@@ -336,6 +347,9 @@ private:
 
     // Вращение превью (пока 2D‑вращение картинки как заглушка)
     bool bRotatingArmorPreview = false;
+    bool bPanningArmorPreview = false;
+    bool bArmorPreviewRmbClickCandidate = false;
+    FVector2D ArmorPreviewRmbStartMouse = FVector2D::ZeroVector;
     FVector2D ArmorPreviewLastMouse = FVector2D::ZeroVector;
 
     /** Ширина зоны ресайза по краю окна (пиксели). */

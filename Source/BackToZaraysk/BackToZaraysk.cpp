@@ -6,6 +6,7 @@
 #include "BackToZaraysk/GameData/Items/HelmetBase.h"
 #include "BackToZaraysk/GameData/Items/VestBase.h"
 #include "BackToZaraysk/GameData/Items/BackpackBase.h"
+#include "BackToZaraysk/GameData/Items/BeltBase.h"
 #include "BackToZaraysk/GameData/Items/EquipModBase.h"
 #if WITH_EDITOR
 #include "Editor/ArmorBaseDetailsCustomization.h"
@@ -26,6 +27,8 @@ void FBackToZarayskModule::StartupModule()
 		FOnGetDetailCustomizationInstance::CreateStatic(&FArmorBaseDetailsCustomization::MakeInstance));
 	PropModule.RegisterCustomClassLayout(ABackpackBase::StaticClass()->GetFName(),
 		FOnGetDetailCustomizationInstance::CreateStatic(&FArmorBaseDetailsCustomization::MakeInstance));
+	PropModule.RegisterCustomClassLayout(ABeltBase::StaticClass()->GetFName(),
+		FOnGetDetailCustomizationInstance::CreateStatic(&FArmorBaseDetailsCustomization::MakeInstance));
 	PropModule.RegisterCustomClassLayout(AEquipModBase::StaticClass()->GetFName(),
 		FOnGetDetailCustomizationInstance::CreateStatic(&FEquipModBaseDetailsCustomization::MakeInstance));
 #endif
@@ -40,6 +43,7 @@ void FBackToZarayskModule::ShutdownModule()
 		PropModule->UnregisterCustomClassLayout(AHelmetBase::StaticClass()->GetFName());
 		PropModule->UnregisterCustomClassLayout(AVestBase::StaticClass()->GetFName());
 		PropModule->UnregisterCustomClassLayout(ABackpackBase::StaticClass()->GetFName());
+		PropModule->UnregisterCustomClassLayout(ABeltBase::StaticClass()->GetFName());
 		PropModule->UnregisterCustomClassLayout(AEquipModBase::StaticClass()->GetFName());
 	}
 #endif

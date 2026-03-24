@@ -1,5 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+// UE57 migration note: this editor-only tool lives in runtime module source tree,
+// so we hard-guard compilation for non-editor targets.
+#if WITH_EDITOR
 #include "BackToZaraysk/Editor/EquipModGridEditorWindow.h"
 #include "BackToZaraysk/GameData/Items/EquipModBase.h"
 #include "BackToZaraysk/GameData/Items/ArmorModPreviewActor.h"
@@ -306,8 +309,16 @@ void FEquipModGridEditorViewportClient::Draw(FViewport* InViewport, FCanvas* Can
 	DrawOriginAxes(InViewport, Canvas);
 }
 
-bool FEquipModGridEditorViewportClient::InputKey(FViewport* InViewport, int32 ControllerId, FKey Key, EInputEvent Event, float AmountDepressed, bool bGamepad)
+bool FEquipModGridEditorViewportClient::InputKey(const FInputKeyEventArgs& EventArgs)
 {
+	FViewport* InViewport = EventArgs.Viewport;
+	const FKey Key = EventArgs.Key;
+	const EInputEvent Event = EventArgs.Event;
+	if (!InViewport)
+	{
+		return FEditorViewportClient::InputKey(EventArgs);
+	}
+
 	if (Event == IE_Pressed && Key == EKeys::S)
 	{
 		SaveToEquipMod();
@@ -341,11 +352,19 @@ bool FEquipModGridEditorViewportClient::InputKey(FViewport* InViewport, int32 Co
 			SelectedAxis = -1;
 		}
 	}
-	return FEditorViewportClient::InputKey(InViewport, ControllerId, Key, Event, AmountDepressed, bGamepad);
+	return FEditorViewportClient::InputKey(EventArgs);
 }
 
-bool FEquipModGridEditorViewportClient::InputAxis(FViewport* InViewport, int32 ControllerId, FKey Key, float Delta, float DeltaTime, int32 NumSamples, bool bGamepad)
+bool FEquipModGridEditorViewportClient::InputAxis(const FInputKeyEventArgs& EventArgs)
 {
+	FViewport* InViewport = EventArgs.Viewport;
+	const FKey Key = EventArgs.Key;
+	const float Delta = EventArgs.AmountDepressed;
+	if (!InViewport)
+	{
+		return FEditorViewportClient::InputAxis(EventArgs);
+	}
+
 	if (bDragging && SelectedAxis >= 0)
 	{
 		FSceneView* View = (FSceneView*)ViewState.GetReference();
@@ -369,7 +388,7 @@ bool FEquipModGridEditorViewportClient::InputAxis(FViewport* InViewport, int32 C
 	}
 	LastMousePos.X = InViewport->GetMouseX();
 	LastMousePos.Y = InViewport->GetMouseY();
-	return FEditorViewportClient::InputAxis(InViewport, ControllerId, Key, Delta, DeltaTime, NumSamples, bGamepad);
+	return FEditorViewportClient::InputAxis(EventArgs);
 }
 
 void FEquipModGridEditorViewportClient::SaveToEquipMod()
@@ -397,3 +416,4 @@ TSharedRef<FEditorViewportClient> SEquipModGridEditorViewport::MakeEditorViewpor
 }
 
 #undef LOCTEXT_NAMESPACE
+#endif // WITH_EDITOR

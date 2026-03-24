@@ -69,7 +69,8 @@ AArmorModPreviewActor::AArmorModPreviewActor()
 	SkyLightComponent->SetupAttachment(Root);
 	SkyLightComponent->Intensity = 0.4f;
 	SkyLightComponent->LightColor = FColor::White;
-	SkyLightComponent->bRealTimeCapture = true;
+	// UE57 migration note: отключаем realtime capture, чтобы не получать предупреждения в превью.
+	SkyLightComponent->bRealTimeCapture = false;
 
 	// Точечный свет слева сзади за камерой
 	PointLightComponent = CreateDefaultSubobject<UPointLightComponent>(TEXT("PointLight"));
@@ -89,6 +90,7 @@ AArmorModPreviewActor::AArmorModPreviewActor()
 	CaptureComponent->bCaptureEveryFrame = true; // Включаем постоянный захват для корректной работы
 	CaptureComponent->bCaptureOnMovement = true;
 	CaptureComponent->bAlwaysPersistRenderingState = true; // Решает проблему "SceneCapture has no view"
+	// UE57 migration note: используем обычный финальный проход как в runtime-рендере.
 	CaptureComponent->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
 	// Камера смотрит вдоль -X на меш у origin; смещение задаётся через CameraPanOffset
 	CaptureComponent->SetRelativeLocation(FVector(220.f, 0.f, 0.f));
@@ -108,6 +110,11 @@ AArmorModPreviewActor::AArmorModPreviewActor()
 	CaptureComponent->PostProcessSettings.SceneFringeIntensity = 0.f;
 	CaptureComponent->PostProcessSettings.bOverride_FilmGrainIntensity = true;
 	CaptureComponent->PostProcessSettings.FilmGrainIntensity = 0.f;
+	// Фиксируем экспозицию для предсказуемого UI-превью (без авто-адаптации в черноту).
+	CaptureComponent->PostProcessSettings.bOverride_AutoExposureMethod = true;
+	CaptureComponent->PostProcessSettings.AutoExposureMethod = EAutoExposureMethod::AEM_Manual;
+	CaptureComponent->PostProcessSettings.bOverride_AutoExposureBias = true;
+	CaptureComponent->PostProcessSettings.AutoExposureBias = 0.0f;
 	
 	// Устанавливаем цвет фона (серый)
 	CaptureComponent->PostProcessSettings.bOverride_ColorGradingIntensity = true;
@@ -132,10 +139,6 @@ void AArmorModPreviewActor::SetMeshFromEquipped(UObject* EquippedMesh)
 {
 	if (!EquippedMesh)
 	{
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("⚠️ ArmorModPreview: EquippedMesh is null"));
-		}
 		SkeletalMeshComponent->SetSkeletalMesh(nullptr);
 		SkeletalMeshComponent->SetVisibility(false);
 		SkeletalMeshComponent->SetHiddenInGame(true);
@@ -164,17 +167,22 @@ void AArmorModPreviewActor::SetMeshFromEquipped(UObject* EquippedMesh)
 		SkeletalMeshComponent->UpdateBounds();
 		SkeletalMeshComponent->MarkRenderStateDirty();
 
-		// Центр вращения и камеры — кость spine_03: смещаем меш так, чтобы spine_03 оказалась в origin
-		const FName PivotBoneName(TEXT("spine_03"));
-		const int32 PivotBoneIndex = SkeletalMeshComponent->GetBoneIndex(PivotBoneName);
-		if (PivotBoneIndex != INDEX_NONE)
+		// UE57 migration note: в превью используем только bounds-центр (без pivot по кости),
+		// чтобы избежать нестабильных bone-space значений и "улёта" меша из кадра.
 		{
-			const FVector PivotLoc = SkeletalMeshComponent->GetBoneLocation(PivotBoneName, EBoneSpaces::ComponentSpace);
-			SkeletalMeshComponent->SetRelativeLocation(-PivotLoc);
-		}
-		else
-		{
-			SkeletalMeshComponent->SetRelativeLocation(FVector::ZeroVector);
+			SkeletalMeshComponent->UpdateBounds();
+			const FBoxSphereBounds WorldBounds = SkeletalMeshComponent->CalcBounds(SkeletalMeshComponent->GetComponentTransform());
+			const FVector LocalCenter = SkeletalMeshComponent->GetComponentTransform().Inverse().TransformPosition(WorldBounds.Origin);
+			const bool bCenterFinite = LocalCenter.X == LocalCenter.X && LocalCenter.Y == LocalCenter.Y && LocalCenter.Z == LocalCenter.Z;
+			const bool bCenterReasonable = LocalCenter.SizeSquared() < FMath::Square(10000.0f);
+			if (bCenterFinite && bCenterReasonable)
+			{
+				SkeletalMeshComponent->SetRelativeLocation(-LocalCenter);
+			}
+			else
+			{
+				SkeletalMeshComponent->SetRelativeLocation(FVector::ZeroVector);
+			}
 		}
 		
 		// Регистрируем компонент в мире
@@ -190,19 +198,8 @@ void AArmorModPreviewActor::SetMeshFromEquipped(UObject* EquippedMesh)
 		SkeletalMeshComponent->SetRenderCustomDepth(false);
 		SkeletalMeshComponent->SetCastShadow(true);
 
-		// В превью рендерим только самого AArmorModPreviewActor:
-		// броню, моды (дочерние компоненты) и линию-сетку (GridLineBatchComponent).
-		if (CaptureComponent)
-		{
-			CaptureComponent->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
-			CaptureComponent->ShowOnlyComponents.Empty();
-			CaptureComponent->ShowOnlyActorComponents(this);
-		}
+		RefreshCaptureShowOnly();
 		
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, FString::Printf(TEXT("✅ ArmorModPreview: Set SkeletalMesh: %s"), *Sk->GetName()));
-		}
 	}
 	else if (UStaticMesh* Sm = Cast<UStaticMesh>(EquippedMesh))
 	{
@@ -220,7 +217,17 @@ void AArmorModPreviewActor::SetMeshFromEquipped(UObject* EquippedMesh)
 		StaticMeshComponent->UpdateBounds();
 		FBoxSphereBounds WorldBounds = StaticMeshComponent->CalcBounds(StaticMeshComponent->GetComponentTransform());
 		FVector LocalCenter = StaticMeshComponent->GetComponentTransform().Inverse().TransformPosition(WorldBounds.Origin);
-		StaticMeshComponent->SetRelativeLocation(-LocalCenter);
+		const bool bCenterFinite = LocalCenter.X == LocalCenter.X && LocalCenter.Y == LocalCenter.Y && LocalCenter.Z == LocalCenter.Z;
+		const bool bCenterReasonable = LocalCenter.SizeSquared() < FMath::Square(10000.0f);
+		if (bCenterFinite && bCenterReasonable)
+		{
+			StaticMeshComponent->SetRelativeLocation(-LocalCenter);
+		}
+		else
+		{
+			// UE57 migration note: guard against invalid local center values causing off-screen preview.
+			StaticMeshComponent->SetRelativeLocation(FVector::ZeroVector);
+		}
 		
 		// Регистрируем компонент в мире
 		if (StaticMeshComponent->IsRegistered())
@@ -236,24 +243,11 @@ void AArmorModPreviewActor::SetMeshFromEquipped(UObject* EquippedMesh)
 		StaticMeshComponent->SetCastShadow(true);
 		StaticMeshComponent->MarkRenderStateDirty();
 
-		if (CaptureComponent)
-		{
-			CaptureComponent->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
-			CaptureComponent->ShowOnlyComponents.Empty();
-			CaptureComponent->ShowOnlyActorComponents(this);
-		}
+		RefreshCaptureShowOnly();
 		
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, FString::Printf(TEXT("✅ ArmorModPreview: Set StaticMesh: %s"), *Sm->GetName()));
-		}
 	}
 	else
 	{
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, FString::Printf(TEXT("❌ ArmorModPreview: Unknown mesh type: %s"), *EquippedMesh->GetClass()->GetName()));
-		}
 		SkeletalMeshComponent->SetSkeletalMesh(nullptr);
 		SkeletalMeshComponent->SetVisibility(false);
 		SkeletalMeshComponent->SetHiddenInGame(true);
@@ -263,6 +257,7 @@ void AArmorModPreviewActor::SetMeshFromEquipped(UObject* EquippedMesh)
 		MeshTrianglesLocal.Empty();
 	}
 	ApplyRotation();
+	FrameCaptureToActiveMesh();
 	// Кэш треугольников отложен на следующий Tick, чтобы не тормозить открытие окна
 	UPrimitiveComponent* ActiveMesh = nullptr;
 	if (SkeletalMeshComponent && SkeletalMeshComponent->GetSkeletalMeshAsset() && SkeletalMeshComponent->IsVisible())
@@ -282,6 +277,53 @@ void AArmorModPreviewActor::ApplyRotation()
 	{
 		MeshHolder->SetRelativeRotation(FRotator(PreviewPitchDegrees, PreviewYawDegrees, PreviewRollDegrees));
 	}
+}
+
+void AArmorModPreviewActor::FrameCaptureToActiveMesh()
+{
+	if (!CaptureComponent)
+	{
+		return;
+	}
+
+	UPrimitiveComponent* ActiveMesh = nullptr;
+	if (SkeletalMeshComponent && SkeletalMeshComponent->GetSkeletalMeshAsset() && SkeletalMeshComponent->IsVisible())
+	{
+		ActiveMesh = SkeletalMeshComponent;
+	}
+	else if (StaticMeshComponent && StaticMeshComponent->GetStaticMesh() && StaticMeshComponent->IsVisible())
+	{
+		ActiveMesh = StaticMeshComponent;
+	}
+	if (!ActiveMesh)
+	{
+		return;
+	}
+
+	ActiveMesh->UpdateBounds();
+	const FBoxSphereBounds Bounds = ActiveMesh->CalcBounds(ActiveMesh->GetComponentTransform());
+	const float Radius = FMath::Max(20.0f, Bounds.SphereRadius);
+
+	// UE57 migration note: авто-фрейминг камеры как compatibility shim для разных pivot/bounds после миграции.
+	CameraDistance = FMath::Clamp(Radius * 1.5f, 90.0f, 500.0f);
+	CameraPanOffset = FVector::ZeroVector;
+	ApplyCameraPan();
+
+	const FVector CamLoc = CaptureComponent->GetComponentLocation();
+	CaptureComponent->SetWorldRotation((Bounds.Origin - CamLoc).Rotation());
+}
+
+void AArmorModPreviewActor::RefreshCaptureShowOnly()
+{
+	if (!CaptureComponent)
+	{
+		return;
+	}
+
+	// UE57 migration note: возвращаем стандартный scene-primitives pipeline,
+	// чтобы исключить артефакты ShowOnly в UI-превью.
+	CaptureComponent->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
+	CaptureComponent->ShowOnlyComponents.Empty();
 }
 
 void AArmorModPreviewActor::AddPanDelta(float DeltaRight, float DeltaUp, float DeltaForward)
@@ -403,12 +445,7 @@ void AArmorModPreviewActor::SetInstalledMods(UEquippableItemData* ArmorItemData)
 		}
 	}
 
-	// Если SceneCapture настроен в режим ShowOnlyList — обновляем список, чтобы включить новые компоненты превью‑модов.
-	if (CaptureComponent && CaptureComponent->PrimitiveRenderMode == ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList)
-	{
-		CaptureComponent->ShowOnlyComponents.Empty();
-		CaptureComponent->ShowOnlyActorComponents(this);
-	}
+	RefreshCaptureShowOnly();
 }
 
 void AArmorModPreviewActor::BuildDefaultGridFromMeshBounds()
@@ -797,6 +834,8 @@ void AArmorModPreviewActor::SetRenderTarget(UTextureRenderTarget2D* RT)
 	if (CaptureComponent && RT)
 	{
 		CaptureComponent->TextureTarget = RT;
+		RefreshCaptureShowOnly();
+		FrameCaptureToActiveMesh();
 		
 		// Убеждаемся, что актор и компоненты зарегистрированы в мире
 		if (!IsActorInitialized())
@@ -813,22 +852,16 @@ void AArmorModPreviewActor::SetRenderTarget(UTextureRenderTarget2D* RT)
 		// Принудительно обновляем RT
 		RT->UpdateResourceImmediate(true);
 		
-		// Убеждаемся, что меш находится в поле зрения камеры
-		// Камера находится в (220, 0, 0) и смотрит на origin
-		// Меш должен быть в origin или рядом с ним
+		// Не трогаем RelativeLocation меша здесь:
+		// SetMeshFromEquipped() уже выставляет корректный pivot/центр.
+		// Принудительный reset в (0,0,0) может увести модель из кадра и дать "чёрное" превью.
 		if (SkeletalMeshComponent && SkeletalMeshComponent->GetSkeletalMeshAsset())
 		{
-			// Вычисляем bounds меша и центрируем его
-			FBoxSphereBounds Bounds = SkeletalMeshComponent->CalcBounds(SkeletalMeshComponent->GetComponentTransform());
-			FVector MeshCenter = Bounds.Origin;
-			// Меш уже должен быть в origin, но убедимся
-			SkeletalMeshComponent->SetRelativeLocation(FVector::ZeroVector);
+			SkeletalMeshComponent->UpdateBounds();
 		}
 		else if (StaticMeshComponent && StaticMeshComponent->GetStaticMesh())
 		{
-			FBoxSphereBounds Bounds = StaticMeshComponent->CalcBounds(StaticMeshComponent->GetComponentTransform());
-			FVector MeshCenter = Bounds.Origin;
-			StaticMeshComponent->SetRelativeLocation(FVector::ZeroVector);
+			StaticMeshComponent->UpdateBounds();
 		}
 		
 		// Принудительно обновляем захват сразу и через несколько кадров
@@ -850,10 +883,6 @@ void AArmorModPreviewActor::SetRenderTarget(UTextureRenderTarget2D* RT)
 						{
 							CaptureComponent->CaptureScene();
 							
-							if (GEngine)
-							{
-								GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Cyan, TEXT("📸 ArmorModPreview: Scene captured (final)"));
-							}
 						}
 					});
 				}

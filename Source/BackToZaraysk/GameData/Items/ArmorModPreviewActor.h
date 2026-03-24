@@ -116,6 +116,9 @@ public:
 	TArray<FArmorModSideGrid> ModGrids;
 
 private:
+	void FrameCaptureToActiveMesh();
+	void RefreshCaptureShowOnly();
+
 	UPROPERTY()
 	TObjectPtr<USceneComponent> MeshHolder = nullptr;
 

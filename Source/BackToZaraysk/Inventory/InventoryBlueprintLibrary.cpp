@@ -9,6 +9,7 @@
 #include "BackToZaraysk/GameData/Items/HelmetBase.h"
 #include "BackToZaraysk/GameData/Items/Cap01.h"
 #include "BackToZaraysk/GameData/Items/BackpackBase.h"
+#include "BackToZaraysk/GameData/Items/BeltBase.h"
 #include "BackToZaraysk/GameData/Items/VestBase.h"
 #include "BackToZaraysk/GameData/Items/ItemBase.h"
 #include "BackToZaraysk/GameData/Items/EquipModBase.h"
@@ -79,6 +80,8 @@ FText UInventoryBlueprintLibrary::GetEquipmentSlotName(EEquipmentSlotType SlotTy
             return FText::FromString(TEXT("Шлем"));
         case Vest:
             return FText::FromString(TEXT("Разгрузка"));
+        case Belt:
+            return FText::FromString(TEXT("Пояс"));
         case Backpack:
             return FText::FromString(TEXT("Рюкзак"));
         case PrimaryWeapon:
@@ -172,6 +175,10 @@ TSubclassOf<AActor> GetPickupClassForItem_Internal(const UInventoryItemData* Ite
     {
         return ABackpackBase::StaticClass();
     }
+    if (ItemData->IsA(UBeltBaseItemData::StaticClass()))
+    {
+        return ABeltBase::StaticClass();
+    }
     if (ItemData->IsA(UVestBaseItemData::StaticClass()))
     {
         return AVestBase::StaticClass();
@@ -197,6 +204,7 @@ TSubclassOf<AActor> GetPickupClassForItem_Internal(const UInventoryItemData* Ite
         {
             case Helmet:   return AHelmetBase::StaticClass();
             case Vest:     return ATacticalVest::StaticClass();
+            case Belt:     return ABeltBase::StaticClass();
             case Backpack: return APickupBackpack::StaticClass();
             case Armor:    return AArmorBase::StaticClass();
             default:       break;
@@ -227,6 +235,10 @@ TSubclassOf<AActor> UInventoryBlueprintLibrary::GetPickupClassForItem(const UInv
     {
         return ABackpackBase::StaticClass();
     }
+    if (ItemData->IsA(UBeltBaseItemData::StaticClass()))
+    {
+        return ABeltBase::StaticClass();
+    }
     if (ItemData->IsA(UVestBaseItemData::StaticClass()))
     {
         return AVestBase::StaticClass();
@@ -252,6 +264,7 @@ TSubclassOf<AActor> UInventoryBlueprintLibrary::GetPickupClassForItem(const UInv
         {
             case Helmet:   return AHelmetBase::StaticClass();
             case Vest:     return ATacticalVest::StaticClass();
+            case Belt:     return ABeltBase::StaticClass();
             case Backpack: return APickupBackpack::StaticClass();
             case Armor:    return AArmorBase::StaticClass();
             default:       break;

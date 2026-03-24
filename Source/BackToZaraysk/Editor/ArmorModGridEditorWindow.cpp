@@ -1,5 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+// UE57 migration note: this editor-only tool lives in runtime module source tree,
+// so we hard-guard compilation for non-editor targets.
+#if WITH_EDITOR
 #include "BackToZaraysk/Editor/ArmorModGridEditorWindow.h"
 #include "BackToZaraysk/GameData/Items/ArmorModPreviewActor.h"
 #include "BackToZaraysk/Inventory/EquippableItemData.h"
@@ -12,10 +15,54 @@
 #include "Framework/Application/SlateApplication.h"
 #include "UnrealClient.h"
 #include "Engine/Engine.h"
+#include "Engine/StaticMesh.h"
 
 #define LOCTEXT_NAMESPACE "ArmorModGridEditor"
 
 static constexpr float ModGridCellWorldSize = 5.0f;
+
+namespace
+{
+static UObject* ResolveArmorPreviewMesh(AEquipmentBase* InArmor)
+{
+	if (!InArmor)
+	{
+		return nullptr;
+	}
+
+	// 1) Preferred source for equipped preview.
+	if (UEquippableItemData* Eq = Cast<UEquippableItemData>(InArmor->ItemInstance))
+	{
+		if (Eq->EquippedMesh)
+		{
+			return Eq->EquippedMesh;
+		}
+		if (Eq->WorldMesh)
+		{
+			return Eq->WorldMesh;
+		}
+	}
+
+	// 2) Generic item visual.
+	if (InArmor->ItemInstance && InArmor->ItemInstance->WorldMesh)
+	{
+		return InArmor->ItemInstance->WorldMesh;
+	}
+
+	// 3) Runtime components on actor instance.
+	if (InArmor->SkeletalMesh && InArmor->SkeletalMesh->GetSkeletalMeshAsset())
+	{
+		return InArmor->SkeletalMesh->GetSkeletalMeshAsset();
+	}
+	if (InArmor->Mesh && InArmor->Mesh->GetStaticMesh())
+	{
+		return InArmor->Mesh->GetStaticMesh();
+	}
+
+	// 4) Never leave viewport completely empty.
+	return LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+}
+}
 
 // ---- FArmorModGridEditorWindow ----
 
@@ -81,19 +128,7 @@ FArmorModGridEditorViewportClient::FArmorModGridEditorViewportClient(FPreviewSce
 	UWorld* World = InPreviewScene->GetWorld();
 	if (!World) return;
 
-	UObject* MeshObj = nullptr;
-	if (UEquippableItemData* Eq = Cast<UEquippableItemData>(InArmor->ItemInstance))
-	{
-		MeshObj = Eq->EquippedMesh;
-	}
-	if (!MeshObj && InArmor->SkeletalMesh && InArmor->SkeletalMesh->GetSkeletalMeshAsset())
-	{
-		MeshObj = InArmor->SkeletalMesh->GetSkeletalMeshAsset();
-	}
-	if (!MeshObj && InArmor->Mesh && InArmor->Mesh->GetStaticMesh())
-	{
-		MeshObj = InArmor->Mesh->GetStaticMesh();
-	}
+	UObject* MeshObj = ResolveArmorPreviewMesh(InArmor);
 
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -304,8 +339,16 @@ void FArmorModGridEditorViewportClient::Draw(FViewport* InViewport, FCanvas* Can
 	DrawSelectedGridAxes(InViewport, Canvas);
 }
 
-bool FArmorModGridEditorViewportClient::InputKey(FViewport* InViewport, int32 ControllerId, FKey Key, EInputEvent Event, float AmountDepressed, bool bGamepad)
+bool FArmorModGridEditorViewportClient::InputKey(const FInputKeyEventArgs& EventArgs)
 {
+	FViewport* InViewport = EventArgs.Viewport;
+	const FKey Key = EventArgs.Key;
+	const EInputEvent Event = EventArgs.Event;
+	if (!InViewport)
+	{
+		return FEditorViewportClient::InputKey(EventArgs);
+	}
+
 	if (Event == IE_Pressed)
 	{
 		if (Key == EKeys::R)
@@ -382,11 +425,19 @@ bool FArmorModGridEditorViewportClient::InputKey(FViewport* InViewport, int32 Co
 			SelectedAxis = -1;
 		}
 	}
-	return FEditorViewportClient::InputKey(InViewport, ControllerId, Key, Event, AmountDepressed, bGamepad);
+	return FEditorViewportClient::InputKey(EventArgs);
 }
 
-bool FArmorModGridEditorViewportClient::InputAxis(FViewport* InViewport, int32 ControllerId, FKey Key, float Delta, float DeltaTime, int32 NumSamples, bool bGamepad)
+bool FArmorModGridEditorViewportClient::InputAxis(const FInputKeyEventArgs& EventArgs)
 {
+	FViewport* InViewport = EventArgs.Viewport;
+	const FKey Key = EventArgs.Key;
+	const float Delta = EventArgs.AmountDepressed;
+	if (!InViewport)
+	{
+		return FEditorViewportClient::InputAxis(EventArgs);
+	}
+
 	if (bDragging && SelectedGridIndex >= 0 && SelectedGridIndex < GridIndexToSideIndex.Num())
 	{
 		int32 Side = GridIndexToSideIndex[SelectedGridIndex];
@@ -427,7 +478,7 @@ bool FArmorModGridEditorViewportClient::InputAxis(FViewport* InViewport, int32 C
 	}
 	LastMousePos.X = InViewport->GetMouseX();
 	LastMousePos.Y = InViewport->GetMouseY();
-	return FEditorViewportClient::InputAxis(InViewport, ControllerId, Key, Delta, DeltaTime, NumSamples, bGamepad);
+	return FEditorViewportClient::InputAxis(EventArgs);
 }
 
 void FArmorModGridEditorViewportClient::SaveToArmor()
@@ -463,3 +514,4 @@ TSharedRef<FEditorViewportClient> SArmorModGridEditorViewport::MakeEditorViewpor
 }
 
 #undef LOCTEXT_NAMESPACE
+#endif // WITH_EDITOR

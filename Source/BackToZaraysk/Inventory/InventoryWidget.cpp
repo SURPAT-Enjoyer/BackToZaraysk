@@ -16,6 +16,7 @@
 #include "Components/PanelWidget.h"
 #include "Components/Image.h"
 #include "Components/VerticalBox.h"
+#include "Components/Viewport.h"
 #include "InventoryGridWidget.h"
 #include "Blueprint/WidgetTree.h"
 #include "Slate/SlateBrushAsset.h"
@@ -32,6 +33,8 @@
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
 #include "Engine/StaticMesh.h"
+#include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 namespace
 {
@@ -542,21 +545,48 @@ void UInventoryWidget::NativeOnInitialized()
                     GS->SetSize(GridSize);
                     GS->SetAutoSize(false);
                     // Регистрируем в координатах рут-канвы
-                    if (UCanvasPanelSlot* RightBase = Cast<UCanvasPanelSlot>(RightPanel->Slot))
                     {
-                        const FVector2D RootPos = RightBase->GetPosition() + Pos;
-                        RegisterGrid(Label, RootPos, GridSize, GridWidth, GridHeight);
-                    }
-                    else
-                    {
-                    RegisterGrid(Label, Pos, GridSize, GridWidth, GridHeight);
+                        if (UCanvasPanelSlot* RightBase = Cast<UCanvasPanelSlot>(RightPanel->Slot))
+                        {
+                            const FVector2D RootPos = RightBase->GetPosition() + Pos;
+                            RegisterGrid(Label, RootPos, GridSize, GridWidth, GridHeight);
+                        }
+                        else
+                        {
+                            RegisterGrid(Label, Pos, GridSize, GridWidth, GridHeight);
+                        }
                     }
                 }
             };
+            // Убираем drop-area/грид "пояс": оставляем только визуальный слот экипировки.
+            GridAreas.RemoveAll([](const FGridArea& A) { return A.Name == TEXT("пояс"); });
             // Убираем грид разгрузки из центральной части
             // AddLabeledGrid(TEXT("разгрузка"), 0.f, FVector2D(480.f, 240.f), 8, 4, TEXT("разгрузка"), false);
-            // Пояс: стиль задаёт ориентир — полупрозрачный тёмный слот и подпись
-            AddLabeledGrid(TEXT("пояс"), 280.f, FVector2D(480.f, 120.f), 8, 2, TEXT("пояс"), false);
+            // Пояс: слот слева от грида.
+            {
+                const float BeltTop = 280.f;
+                BeltSlotRef = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("BeltOnlySlot"));
+                BeltSlotRef->SetBrushColor(FLinearColor(1.f, 1.f, 1.f, 0.05f));
+                if (UCanvasPanelSlot* SS = RightPanel->AddChildToCanvas(BeltSlotRef))
+                {
+                    SS->SetAnchors(FAnchors(0.f, 0.f, 0.f, 0.f));
+                    SS->SetAlignment(FVector2D(0.f, 0.f));
+                    SS->SetPosition(FVector2D(0.f, BeltTop));
+                    SS->SetSize(FVector2D(60.f, 60.f));
+                }
+
+                UTextBlock* BeltSlotText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("BeltOnlySlotText"));
+                BeltSlotText->SetText(FText::FromString(TEXT("пояс")));
+                BeltSlotText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+                BeltSlotText->SetJustification(ETextJustify::Center);
+                if (UCanvasPanelSlot* ST = RightPanel->AddChildToCanvas(BeltSlotText))
+                {
+                    ST->SetAnchors(FAnchors(0.f, 0.f, 0.f, 0.f));
+                    ST->SetAlignment(FVector2D(0.f, 0.f));
+                    ST->SetPosition(FVector2D(0.f, BeltTop + 60.f));
+                    ST->SetSize(FVector2D(60.f, 20.f));
+                }
+            }
             // Карманы: создаём до четырёх мини-гридов по линии слева направо.
             // Размер мини-гридов (в клетках) берём из настроек персонажа (PocketMiniGridSizes).
             {
@@ -831,7 +861,7 @@ void UInventoryWidget::NativeOnInitialized()
 void UInventoryWidget::NativeConstruct()
 {
     Super::NativeConstruct();
-    bIsFocusable = true; // принимать клавиатурные события
+    SetIsFocusable(true); // принимать клавиатурные события
     SetKeyboardFocus();
     SetVisible(false);
     // При конструкте не пересоздаём виджеты, а если уже есть отображаемые — рееставрируем позиции из Placed
@@ -1097,6 +1127,11 @@ void UInventoryWidget::UpdateEquipmentSlots()
         HelmetSlotRef->ClearChildren();
         HelmetItemWidgetRef = nullptr;
     }
+    if (BeltSlotRef && BeltItemWidgetRef)
+    {
+        BeltSlotRef->ClearChildren();
+        BeltItemWidgetRef = nullptr;
+    }
 
     // Получаем экипированный рюкзак и отображаем его в слоте
     if (APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(GetOwningPlayerPawn()))
@@ -1139,6 +1174,19 @@ void UInventoryWidget::UpdateEquipmentSlots()
                     ItemW->Init(EquippedVest, EquippedVest->Icon, EquipmentSlotSize);
                     VestSlotRef->SetContent(ItemW);
                     VestItemWidgetRef = ItemW;
+                }
+            }
+
+            // Пояс
+            if (UEquippableItemData* EquippedBelt = InvComp->GetEquippedItem(Belt))
+            {
+                if (BeltSlotRef)
+                {
+                    UInventoryItemWidget* ItemW = WidgetTree->ConstructWidget<UInventoryItemWidget>(UInventoryItemWidget::StaticClass());
+                    ItemW->bIsStaticEquipmentSlot = true;
+                    ItemW->Init(EquippedBelt, EquippedBelt->Icon, FVector2D(60.f, 60.f));
+                    BeltSlotRef->SetContent(ItemW);
+                    BeltItemWidgetRef = ItemW;
                 }
             }
 
@@ -1737,13 +1785,14 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
     if (!RootCanvas) return false;
 
     // Дроп мода на превью брони в окне модификации
+    UWidget* ArmorPreviewSurface = ArmorModViewport ? Cast<UWidget>(ArmorModViewport) : Cast<UWidget>(ArmorModImage);
     if (ArmorModWindowBorder && ArmorModWindowBorder->GetVisibility() == ESlateVisibility::Visible &&
-        ArmorModImage && ArmorModImage->GetCachedGeometry().IsUnderLocation(ScreenPos) &&
+        ArmorPreviewSurface && ArmorPreviewSurface->GetCachedGeometry().IsUnderLocation(ScreenPos) &&
         OpenedArmorForMods && ArmorModPreviewActor)
     {
         if (UEquipModBaseItemData* ModData = Cast<UEquipModBaseItemData>(DraggedWidget->ItemData))
         {
-            const FGeometry& ImgGeo = ArmorModImage->GetCachedGeometry();
+            const FGeometry& ImgGeo = ArmorPreviewSurface->GetCachedGeometry();
             FVector2D LocalPos = ImgGeo.AbsoluteToLocal(ScreenPos);
             FVector2D WidgetSize = ImgGeo.GetLocalSize();
             int32 Side = 0, CellX = 0, CellY = 0;
@@ -2062,6 +2111,32 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
                             UpdateEquipmentSlots();
                             UpdateBackpackStorageGrid();
                             UpdateVestGrid();
+                            RefreshInventoryUI();
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    if (BeltSlotRef && BeltSlotRef->GetCachedGeometry().IsUnderLocation(ScreenPos))
+    {
+        if (UEquippableItemData* BeltItem = Cast<UEquippableItemData>(DraggedWidget->ItemData))
+        {
+            if (BeltItem->EquipmentSlot == Belt)
+            {
+                if (APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(GetOwningPlayerPawn()))
+                {
+                    if (UInventoryComponent* InvComp = PlayerChar->InventoryComponent)
+                    {
+                        InvComp->RemoveFromAnyStorage(DraggedWidget->ItemData);
+                        InvComp->BackpackItems.AddUnique(BeltItem);
+                        if (InvComp->EquipItemFromInventory(BeltItem))
+                        {
+                            DraggedWidget->SetTint(FLinearColor(1.f, 1.f, 1.f, 1.f));
+                            UpdateEquipmentSlots();
                             RefreshInventoryUI();
                             return true;
                         }
@@ -2701,6 +2776,12 @@ bool UInventoryWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDrop
                 UpdateEquipmentSlots();
                 RefreshInventoryUI();
             }
+            else if (EquippedItem->EquipmentSlot == Belt)
+            {
+                // Пояс: обновляем слоты/интерфейс.
+                UpdateEquipmentSlots();
+                RefreshInventoryUI();
+            }
         }
     }
     
@@ -2801,6 +2882,19 @@ bool UInventoryWidget::NativeOnDragOver(const FGeometry& InGeometry, const FDrag
             if (UEquippableItemData* BackpackItem = Cast<UEquippableItemData>(DraggedWidget->ItemData))
             {
                 if (BackpackItem->EquipmentSlot == Backpack)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    if (BeltSlotRef && BeltSlotRef->GetCachedGeometry().IsUnderLocation(ScreenPos))
+    {
+        if (UInventoryItemWidget* DraggedWidget = Cast<UInventoryItemWidget>(InOperation ? InOperation->Payload : nullptr))
+        {
+            if (UEquippableItemData* BeltItem = Cast<UEquippableItemData>(DraggedWidget->ItemData))
+            {
+                if (BeltItem->EquipmentSlot == Belt)
                 {
                     return true;
                 }
@@ -2908,6 +3002,7 @@ FReply UInventoryWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, co
         }
 
         // Окно модификации броника: зона ресайза (правый/нижний край) -> ресайз; по превью — вращение; иначе — перетаскивание
+        UWidget* ArmorPreviewSurface = ArmorModViewport ? Cast<UWidget>(ArmorModViewport) : Cast<UWidget>(ArmorModImage);
         if (ArmorModWindowBorder && ArmorModWindowBorder->GetVisibility() == ESlateVisibility::Visible &&
             ArmorModWindowBorder->GetCachedGeometry().IsUnderLocation(ScreenPos))
         {
@@ -2931,7 +3026,7 @@ FReply UInventoryWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, co
                 }
             }
             // Вращение превью по области картинки
-            if (ArmorModImage && ArmorModImage->GetCachedGeometry().IsUnderLocation(ScreenPos))
+            if (ArmorPreviewSurface && ArmorPreviewSurface->GetCachedGeometry().IsUnderLocation(ScreenPos))
             {
                 bRotatingArmorPreview = true;
                 ArmorPreviewLastMouse = ScreenPos;
@@ -2949,70 +3044,17 @@ FReply UInventoryWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, co
 
     }
 
-    // ПКМ по превью брони: контекстное меню (Установить/Снять) или вращение, если клик не по ячейке
+    // ПКМ по превью брони: панорама камеры (контекстное меню откроется при коротком клике без перетаскивания)
+    UWidget* ArmorPreviewSurface = ArmorModViewport ? Cast<UWidget>(ArmorModViewport) : Cast<UWidget>(ArmorModImage);
     if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton &&
         ArmorModWindowBorder && ArmorModWindowBorder->GetVisibility() == ESlateVisibility::Visible &&
-        ArmorModImage && ArmorModImage->GetCachedGeometry().IsUnderLocation(InMouseEvent.GetScreenSpacePosition()) &&
+        ArmorPreviewSurface && ArmorPreviewSurface->GetCachedGeometry().IsUnderLocation(InMouseEvent.GetScreenSpacePosition()) &&
         OpenedArmorForMods && ArmorModPreviewActor)
     {
         const FVector2D ScreenPos = InMouseEvent.GetScreenSpacePosition();
-        const FGeometry& ImgGeo = ArmorModImage->GetCachedGeometry();
-        FVector2D LocalPos = ImgGeo.AbsoluteToLocal(ScreenPos);
-        FVector2D WidgetSize = ImgGeo.GetLocalSize();
-        int32 Side = 0, CellX = 0, CellY = 0;
-        if (ArmorModPreviewActor->HitTestGridFromWidgetPosition(LocalPos, WidgetSize, Side, CellX, CellY))
-        {
-            const int32 ModIndex = OpenedArmorForMods->GetInstalledModIndexAt(Side, CellX, CellY);
-            UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(WidgetTree ? WidgetTree->RootWidget : nullptr);
-            if (RootCanvas)
-            {
-                for (UWidget* W2 : RootCanvas->GetAllChildren())
-                    if (W2 && W2->GetFName() == TEXT("ContextMenu")) { RootCanvas->RemoveChild(W2); break; }
-                UBorder* Menu = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("ContextMenu"));
-                Menu->SetBrushColor(FLinearColor(0.f, 0.f, 0.f, 0.9f));
-                Menu->SetPadding(FMargin(8.f));
-                UVerticalBox* VBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("ContextMenuVBox"));
-                Menu->SetContent(VBox);
-                if (ModIndex >= 0)
-                {
-                    ArmorModContextMenuModIndex = ModIndex;
-                    UButton* UninstallBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
-                    UTextBlock* UninstallTxt = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
-                    UninstallTxt->SetText(FText::FromString(TEXT("Снять")));
-                    UninstallBtn->AddChild(UninstallTxt);
-                    VBox->AddChildToVerticalBox(UninstallBtn);
-                    UninstallBtn->OnClicked.Clear();
-                    UninstallBtn->OnClicked.AddDynamic(this, &UInventoryWidget::OnArmorModContextUninstallClicked);
-                }
-                else
-                {
-                    ArmorModInstallSide = Side;
-                    ArmorModInstallCellX = CellX;
-                    ArmorModInstallCellY = CellY;
-                    UButton* InstallBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
-                    UTextBlock* InstallTxt = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
-                    InstallTxt->SetText(FText::FromString(TEXT("Установить")));
-                    InstallBtn->AddChild(InstallTxt);
-                    InstallBtn->SetIsEnabled(AnyModCanInstallAtArmorCell(Side, CellX, CellY));
-                    if (!InstallBtn->GetIsEnabled())
-                        InstallTxt->SetColorAndOpacity(FSlateColor(FLinearColor(0.5f, 0.5f, 0.5f, 0.8f)));
-                    VBox->AddChildToVerticalBox(InstallBtn);
-                    InstallBtn->OnClicked.Clear();
-                    InstallBtn->OnClicked.AddDynamic(this, &UInventoryWidget::OnArmorModContextInstallClicked);
-                }
-                if (UCanvasPanelSlot* S = RootCanvas->AddChildToCanvas(Menu))
-                {
-                    const FVector2D Local = RootCanvas->GetCachedGeometry().AbsoluteToLocal(ScreenPos);
-                    S->SetAnchors(FAnchors(0.f, 0.f, 0.f, 0.f));
-                    S->SetAlignment(FVector2D(0.f, 0.f));
-                    S->SetPosition(Local + FVector2D(6.f, 6.f));
-                    S->SetSize(FVector2D(200.f, 80.f));
-                    S->SetZOrder(9999);
-                }
-            }
-            return FReply::Handled();
-        }
-        bRotatingArmorPreview = true;
+        bPanningArmorPreview = true;
+        bArmorPreviewRmbClickCandidate = true;
+        ArmorPreviewRmbStartMouse = ScreenPos;
         ArmorPreviewLastMouse = ScreenPos;
         return FReply::Handled().CaptureMouse(TakeWidget());
     }
@@ -3050,9 +3092,73 @@ FReply UInventoryWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, cons
             return FReply::Handled().ReleaseMouseCapture();
         }
     }
-    if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton && bRotatingArmorPreview)
+    if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton && bPanningArmorPreview)
     {
-        bRotatingArmorPreview = false;
+        if (bArmorPreviewRmbClickCandidate && OpenedArmorForMods && ArmorModPreviewActor)
+        {
+            UWidget* ArmorPreviewSurface = ArmorModViewport ? Cast<UWidget>(ArmorModViewport) : Cast<UWidget>(ArmorModImage);
+            if (ArmorPreviewSurface)
+            {
+                const FVector2D ScreenPos = InMouseEvent.GetScreenSpacePosition();
+                const FGeometry& ImgGeo = ArmorPreviewSurface->GetCachedGeometry();
+                FVector2D LocalPos = ImgGeo.AbsoluteToLocal(ScreenPos);
+                FVector2D WidgetSize = ImgGeo.GetLocalSize();
+                int32 Side = 0, CellX = 0, CellY = 0;
+                if (ArmorModPreviewActor->HitTestGridFromWidgetPosition(LocalPos, WidgetSize, Side, CellX, CellY))
+                {
+                    const int32 ModIndex = OpenedArmorForMods->GetInstalledModIndexAt(Side, CellX, CellY);
+                    UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(WidgetTree ? WidgetTree->RootWidget : nullptr);
+                    if (RootCanvas)
+                    {
+                        for (UWidget* W2 : RootCanvas->GetAllChildren())
+                            if (W2 && W2->GetFName() == TEXT("ContextMenu")) { RootCanvas->RemoveChild(W2); break; }
+                        UBorder* Menu = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("ContextMenu"));
+                        Menu->SetBrushColor(FLinearColor(0.f, 0.f, 0.f, 0.9f));
+                        Menu->SetPadding(FMargin(8.f));
+                        UVerticalBox* VBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("ContextMenuVBox"));
+                        Menu->SetContent(VBox);
+                        if (ModIndex >= 0)
+                        {
+                            ArmorModContextMenuModIndex = ModIndex;
+                            UButton* UninstallBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
+                            UTextBlock* UninstallTxt = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+                            UninstallTxt->SetText(FText::FromString(TEXT("Снять")));
+                            UninstallBtn->AddChild(UninstallTxt);
+                            VBox->AddChildToVerticalBox(UninstallBtn);
+                            UninstallBtn->OnClicked.Clear();
+                            UninstallBtn->OnClicked.AddDynamic(this, &UInventoryWidget::OnArmorModContextUninstallClicked);
+                        }
+                        else
+                        {
+                            ArmorModInstallSide = Side;
+                            ArmorModInstallCellX = CellX;
+                            ArmorModInstallCellY = CellY;
+                            UButton* InstallBtn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
+                            UTextBlock* InstallTxt = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+                            InstallTxt->SetText(FText::FromString(TEXT("Установить")));
+                            InstallBtn->AddChild(InstallTxt);
+                            InstallBtn->SetIsEnabled(AnyModCanInstallAtArmorCell(Side, CellX, CellY));
+                            if (!InstallBtn->GetIsEnabled())
+                                InstallTxt->SetColorAndOpacity(FSlateColor(FLinearColor(0.5f, 0.5f, 0.5f, 0.8f)));
+                            VBox->AddChildToVerticalBox(InstallBtn);
+                            InstallBtn->OnClicked.Clear();
+                            InstallBtn->OnClicked.AddDynamic(this, &UInventoryWidget::OnArmorModContextInstallClicked);
+                        }
+                        if (UCanvasPanelSlot* S = RootCanvas->AddChildToCanvas(Menu))
+                        {
+                            const FVector2D Local = RootCanvas->GetCachedGeometry().AbsoluteToLocal(ScreenPos);
+                            S->SetAnchors(FAnchors(0.f, 0.f, 0.f, 0.f));
+                            S->SetAlignment(FVector2D(0.f, 0.f));
+                            S->SetPosition(Local + FVector2D(6.f, 6.f));
+                            S->SetSize(FVector2D(200.f, 80.f));
+                            S->SetZOrder(9999);
+                        }
+                    }
+                }
+            }
+        }
+        bPanningArmorPreview = false;
+        bArmorPreviewRmbClickCandidate = false;
         return FReply::Handled().ReleaseMouseCapture();
     }
     return Super::NativeOnMouseButtonUp(InGeometry, InMouseEvent);
@@ -3092,7 +3198,7 @@ FReply UInventoryWidget::NativeOnMouseMove(const FGeometry& InGeometry, const FP
         return FReply::Handled();
     }
 
-    if ((bResizingArmorModWindow || bDraggingArmorModWindow || bRotatingArmorPreview) && ArmorModWindowBorder && ArmorModWindowBorder->GetVisibility() == ESlateVisibility::Visible)
+    if ((bResizingArmorModWindow || bDraggingArmorModWindow || bRotatingArmorPreview || bPanningArmorPreview) && ArmorModWindowBorder && ArmorModWindowBorder->GetVisibility() == ESlateVisibility::Visible)
     {
         UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(WidgetTree ? WidgetTree->RootWidget : nullptr);
         if (RootCanvas)
@@ -3125,28 +3231,27 @@ FReply UInventoryWidget::NativeOnMouseMove(const FGeometry& InGeometry, const FP
                 }
             }
 
-            if (bRotatingArmorPreview)
+            if (bRotatingArmorPreview || bPanningArmorPreview)
             {
                 const FVector2D Delta = ScreenPos - ArmorPreviewLastMouse;
                 ArmorPreviewLastMouse = ScreenPos;
                 const float Sens = 0.8f;
                 const float PanSens = 0.5f;
-                const bool bBothButtons = InMouseEvent.IsMouseButtonDown(EKeys::LeftMouseButton) && InMouseEvent.IsMouseButtonDown(EKeys::RightMouseButton);
-                const bool bRollMode = InMouseEvent.IsControlDown();
+                if (bPanningArmorPreview && bArmorPreviewRmbClickCandidate)
+                {
+                    if ((ScreenPos - ArmorPreviewRmbStartMouse).Size() > 4.0f)
+                    {
+                        bArmorPreviewRmbClickCandidate = false;
+                    }
+                }
 
                 if (ArmorModPreviewActor)
                 {
-                    if (bBothButtons)
+                    if (bPanningArmorPreview)
                     {
-                        // Перемещение камеры в трёх плоскостях без вращения модели (ЛКМ + ПКМ)
                         ArmorModPreviewActor->AddPanDelta(Delta.X * PanSens, -Delta.Y * PanSens, 0.f);
                     }
-                    else if (bRollMode)
-                    {
-                        ArmorModPreviewActor->PreviewRollDegrees += Delta.X * Sens;
-                        ArmorModPreviewActor->ApplyRotation();
-                    }
-                    else
+                    else if (bRotatingArmorPreview)
                     {
                         ArmorModPreviewActor->PreviewYawDegrees += Delta.X * Sens;
                         ArmorModPreviewActor->PreviewPitchDegrees -= Delta.Y * Sens;
@@ -3171,8 +3276,9 @@ FReply UInventoryWidget::NativeOnMouseMove(const FGeometry& InGeometry, const FP
 
 FReply UInventoryWidget::NativeOnMouseWheel(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
+    UWidget* ArmorPreviewSurface = ArmorModViewport ? Cast<UWidget>(ArmorModViewport) : Cast<UWidget>(ArmorModImage);
     if (ArmorModWindowBorder && ArmorModWindowBorder->GetVisibility() == ESlateVisibility::Visible &&
-        ArmorModImage && ArmorModImage->GetCachedGeometry().IsUnderLocation(InMouseEvent.GetScreenSpacePosition()))
+        ArmorPreviewSurface && ArmorPreviewSurface->GetCachedGeometry().IsUnderLocation(InMouseEvent.GetScreenSpacePosition()))
     {
         const float Delta = InMouseEvent.GetWheelDelta();
         if (ArmorModPreviewActor)
@@ -4493,84 +4599,18 @@ void UInventoryWidget::AddVestGridItemIcon(UInventoryItemData* ItemData, int32 I
 
 bool UInventoryWidget::CanDropOnVestGrid(const FGeometry& Geometry, const FVector2D& ScreenPosition) const
 {
-    // Функция временно отключена для работы с 6 отдельными гридами
+    // Функция временно отключена для работы с 6 отдельными гридами.
+    // В UE 5.7 недостижимый код ниже превращается в ошибку (C4702),
+    // поэтому оставляем только явный возврат.
     return false;
-    
-    // Проверяем, находится ли курсор над гридом жилета
-    FVector2D LocalPosition = Geometry.AbsoluteToLocal(ScreenPosition);
-    
-    // Получаем позицию и размер грида жилета
-    FVector2D VestGridPosition = FVector2D(70.f, 300.f);
-    FVector2D VestGridSizeLocal = FVector2D(360.f, 120.f);
-    
-    return LocalPosition.X >= VestGridPosition.X && 
-           LocalPosition.X <= VestGridPosition.X + VestGridSizeLocal.X &&
-           LocalPosition.Y >= VestGridPosition.Y && 
-           LocalPosition.Y <= VestGridPosition.Y + VestGridSizeLocal.Y;
 }
 
 bool UInventoryWidget::HandleVestGridDrop(UInventoryItemData* ItemData, const FVector2D& Position)
 {
-    // Функция временно отключена для работы с 6 отдельными гридами
+    // Функция временно отключена для работы с 6 отдельными гридами.
+    // Дальше оставлять код после unconditional return нельзя в UE 5.7:
+    // компилятор выдаёт C4702 как error с текущими build settings.
     return false;
-    
-    // Получаем экипированный жилет
-    APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(GetOwningPlayerPawn());
-    if (!PlayerChar || !PlayerChar->InventoryComponent) return false;
-    
-    UEquippableItemData* EquippedVest = Cast<UEquippableItemData>(PlayerChar->InventoryComponent->GetEquippedItem(Vest));
-    if (!EquippedVest || !EquippedVest->bHasAdditionalStorage) return false;
-    
-    // Вычисляем позицию в ячейках грида
-    FVector2D VestGridPosition = FVector2D(70.f, 300.f);
-    FVector2D LocalPosition = Position - VestGridPosition;
-    const int32 CellSize = 60;
-    
-    int32 CellX = FMath::FloorToInt(LocalPosition.X / CellSize);
-    int32 CellY = FMath::FloorToInt(LocalPosition.Y / CellSize);
-    
-    // Проверяем границы
-    if (CellX < 0 || CellX >= 6 || CellY < 0 || CellY >= 2) return false;
-    
-    // Проверяем, помещается ли предмет
-    if (CellX + ItemData->SizeInCellsX > 6 || CellY + ItemData->SizeInCellsY > 2) return false;
-    
-    // Проверяем, свободны ли ячейки
-    for (int32 dy = 0; dy < ItemData->SizeInCellsY; ++dy)
-    {
-        for (int32 dx = 0; dx < ItemData->SizeInCellsX; ++dx)
-        {
-            if (CellY + dy >= 2 || CellX + dx >= 6) return false;
-            // if (VestOccupiedCells[CellY + dy][CellX + dx]) return false;
-        }
-    }
-    
-    // Добавляем предмет в хранилище жилета
-    bool bSuccess = PlayerChar->InventoryComponent->AddToEquipmentStorage(EquippedVest, ItemData);
-    
-    if (bSuccess)
-    {
-        // Отмечаем ячейки как занятые
-        for (int32 dy = 0; dy < ItemData->SizeInCellsY; ++dy)
-        {
-            for (int32 dx = 0; dx < ItemData->SizeInCellsX; ++dx)
-            {
-                // VestOccupiedCells[CellY + dy][CellX + dx] = true;
-            }
-        }
-        
-        // Обновляем грид
-        UpdateVestGrid();
-        
-        if (GEngine)
-        {
-            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
-                FString::Printf(TEXT("✅ Added '%s' to vest grid at (%d,%d)"), 
-                    *ItemData->DisplayName.ToString(), CellX, CellY));
-        }
-    }
-    
-    return bSuccess;
 }
 
 bool UInventoryWidget::HandleVestGridItemDrag(UInventoryItemData* ItemData)
@@ -4975,20 +5015,33 @@ void UInventoryWidget::OpenArmorModWindow(UEquippableItemData* ArmorItem)
             CS->SetZOrder(100);
         }
 
-        // Область превью (3D-модель через RenderTarget)
+        // Область превью (новый путь: UViewport)
+        ArmorModViewport = WidgetTree->ConstructWidget<UViewport>(UViewport::StaticClass(), TEXT("ArmorModViewport"));
+        ArmorModViewport->SetVisibility(ESlateVisibility::Visible);
+        if (UCanvasPanelSlot* VS = Cast<UCanvasPanelSlot>(ArmorModWindowCanvas->AddChildToCanvas(ArmorModViewport)))
+        {
+            VS->SetAnchors(FAnchors(0.f, 0.f, 1.f, 1.f));
+            VS->SetAlignment(FVector2D(0.f, 0.f));
+            VS->SetOffsets(FMargin(12.f, 36.f, 12.f, 40.f));
+            VS->SetZOrder(1);
+        }
+
+        // Legacy/fallback preview path (RenderTarget->Image)
         ArmorModImage = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("ArmorModImage"));
         if (UCanvasPanelSlot* IS = Cast<UCanvasPanelSlot>(ArmorModWindowCanvas->AddChildToCanvas(ArmorModImage)))
         {
             IS->SetAnchors(FAnchors(0.f, 0.f, 1.f, 1.f));
             IS->SetAlignment(FVector2D(0.f, 0.f));
-            IS->SetPosition(FVector2D(12.f, 36.f));
-            IS->SetSize(FVector2D(-24.f, -48.f));
-            IS->SetZOrder(1);
+            // UE57 migration note: stretch-слот в Canvas ожидает margins через offsets.
+            // Отрицательные размеры здесь могут давать пустую/чёрную область превью.
+            IS->SetOffsets(FMargin(12.f, 36.f, 12.f, 40.f));
+            IS->SetZOrder(0);
         }
+        ArmorModImage->SetVisibility(ESlateVisibility::Collapsed);
 
         // Подсказка: вращение по трём осям
         UTextBlock* RotateHint = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("ArmorModRotateHint"));
-        RotateHint->SetText(FText::FromString(TEXT("Превью: ЛКМ/ПКМ — поворот; ЛКМ+ПКМ — сдвиг; Ctrl+драг — крен. Колесо — приближение/удаление камеры. Тяните край окна — размер.")));
+        RotateHint->SetText(FText::FromString(TEXT("Превью: ЛКМ — поворот; ПКМ — перемещение камеры; Колесо — зум. Тяните край окна — размер.")));
         RotateHint->SetColorAndOpacity(FSlateColor(FLinearColor(0.85f, 0.85f, 0.85f, 0.9f)));
         if (UCanvasPanelSlot* HS = Cast<UCanvasPanelSlot>(ArmorModWindowCanvas->AddChildToCanvas(RotateHint)))
         {
@@ -5002,6 +5055,10 @@ void UInventoryWidget::OpenArmorModWindow(UEquippableItemData* ArmorItem)
 
     ArmorModWindowBorder->SetVisibility(ESlateVisibility::Visible);
     ArmorModPreviewScale = 1.f;
+    if (ArmorModViewport)
+    {
+        ArmorModViewport->SetVisibility(ESlateVisibility::Visible);
+    }
     if (ArmorModImage)
     {
         ArmorModImage->SetRenderTransform(FWidgetTransform());
@@ -5035,15 +5092,66 @@ void UInventoryWidget::OpenArmorModWindow(UEquippableItemData* ArmorItem)
         }
     }
 
-    UWorld* World = GetWorld();
-    if (World && ArmorModImage)
+    UWorld* SpawnWorld = nullptr;
+    if (ArmorModViewport && ArmorModViewport->GetViewportWorld())
     {
+        SpawnWorld = ArmorModViewport->GetViewportWorld();
+    }
+    else
+    {
+        SpawnWorld = GetWorld();
+    }
+    if (SpawnWorld)
+    {
+        auto ApplyArmorPreviewBrush = [this](UTextureRenderTarget2D* InRT)
+        {
+            if (!ArmorModImage || !InRT)
+            {
+                return;
+            }
+
+            // UE57 migration note: полностью переписанный вывод RT через MID с принудительно непрозрачной альфой.
+            if (!ArmorModPreviewMID)
+            {
+                UMaterialInterface* BaseMat = LoadObject<UMaterialInterface>(
+                    nullptr,
+                    TEXT("/Engine/EngineMaterials/Widget3DPassThrough_Translucent.Widget3DPassThrough_Translucent"));
+                if (BaseMat)
+                {
+                    ArmorModPreviewMID = UMaterialInstanceDynamic::Create(BaseMat, this);
+                }
+            }
+
+            if (ArmorModPreviewMID)
+            {
+                ArmorModPreviewMID->SetTextureParameterValue(TEXT("SlateUI"), InRT);
+                ArmorModPreviewMID->SetVectorParameterValue(TEXT("TintColorAndOpacity"), FLinearColor::White);
+                ArmorModPreviewMID->SetVectorParameterValue(TEXT("BackColor"), FLinearColor::White);
+                ArmorModPreviewMID->SetScalarParameterValue(TEXT("OpacityFromTexture"), 0.0f);
+                ArmorModImage->SetBrushFromMaterial(ArmorModPreviewMID);
+            }
+            else
+            {
+                FSlateBrush Brush;
+                Brush.SetResourceObject(InRT);
+                Brush.ImageSize = FVector2D(1024.f, 1024.f);
+                Brush.DrawAs = ESlateBrushDrawType::Image;
+                ArmorModImage->SetBrush(Brush);
+            }
+
+            ArmorModImage->SetColorAndOpacity(FLinearColor::White);
+            ArmorModImage->SetRenderOpacity(1.0f);
+            ArmorModImage->SetRenderTransform(FWidgetTransform());
+            ArmorModImage->InvalidateLayoutAndVolatility();
+        };
+
         // Создаём RenderTarget (владелец — виджет)
         ArmorModRenderTarget = NewObject<UTextureRenderTarget2D>(this, UTextureRenderTarget2D::StaticClass(), NAME_None, RF_Transient);
         if (ArmorModRenderTarget)
         {
-            ArmorModRenderTarget->RenderTargetFormat = RTF_RGBA8;
-            ArmorModRenderTarget->InitAutoFormat(512, 512);
+            ArmorModRenderTarget->RenderTargetFormat = RTF_RGBA16f;
+            ArmorModRenderTarget->InitAutoFormat(1024, 1024);
+            ArmorModRenderTarget->ClearColor = FLinearColor(0.08f, 0.08f, 0.08f, 1.0f);
             ArmorModRenderTarget->UpdateResource();
         }
 
@@ -5051,64 +5159,46 @@ void UInventoryWidget::OpenArmorModWindow(UEquippableItemData* ArmorItem)
         SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
         // Размещаем актор далеко от игрового мира, чтобы не мешать
         FVector SpawnLoc(10000.f, 10000.f, 0.f);
-        AArmorModPreviewActor* Preview = World->SpawnActor<AArmorModPreviewActor>(SpawnLoc, FRotator::ZeroRotator, SpawnParams);
+        AArmorModPreviewActor* Preview = SpawnWorld->SpawnActor<AArmorModPreviewActor>(SpawnLoc, FRotator::ZeroRotator, SpawnParams);
         if (Preview && ArmorModRenderTarget)
         {
             ArmorModPreviewActor = Preview;
+            if (ArmorModViewport)
+            {
+                ArmorModViewport->SetViewLocation(SpawnLoc + FVector(220.f, 0.f, 0.f));
+                ArmorModViewport->SetViewRotation(FRotator(0.f, 180.f, 0.f));
+            }
             
             // Отображаем визуал объекта (меш бронежилета из EquippedMesh)
             Preview->SetMeshFromEquipped(ArmorItem->EquippedMesh);
             // Визуальная сетка для установки модулей (из броника или по умолчанию из bounds)
             Preview->SetModGrids(ArmorItem->ModSideGrids);
             Preview->SetInstalledMods(ArmorItem);
-            if (GEngine && ArmorItem->EquippedMesh)
-            {
-                GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Yellow,
-                    FString::Printf(TEXT("🔍 Окно модификации: %s"), *ArmorItem->EquippedMesh->GetName()));
-            }
-            
             // Сохраняем указатель на RT в локальную переменную для захвата в лямбде
             UTextureRenderTarget2D* LocalRT = ArmorModRenderTarget;
             
             // Устанавливаем RT сразу
             Preview->SetRenderTarget(LocalRT);
-            
-            // Обновляем изображение в UI сразу
-            FSlateBrush Brush;
-            Brush.SetResourceObject(LocalRT);
-            Brush.ImageSize = FVector2D(512.f, 512.f);
-            if (ArmorModImage)
-            {
-                ArmorModImage->SetBrush(Brush);
-                ArmorModImage->SetRenderTransform(FWidgetTransform());
-            }
+            ApplyArmorPreviewBrush(LocalRT);
             
             // Небольшая задержка перед обновлением UI, чтобы RT успел захватить сцену
-            World->GetTimerManager().SetTimerForNextTick([this, Preview, LocalRT]()
+            SpawnWorld->GetTimerManager().SetTimerForNextTick([this, Preview, LocalRT]()
             {
                 if (Preview && LocalRT && ArmorModImage)
                 {
-                    // Обновляем изображение в UI после захвата
-                    FSlateBrush Brush;
-                    Brush.SetResourceObject(LocalRT);
-                    Brush.ImageSize = FVector2D(512.f, 512.f);
-                    ArmorModImage->SetBrush(Brush);
-                    ArmorModImage->SetRenderTransform(FWidgetTransform());
-                    
-                    // Принудительно обновляем виджет
-                    ArmorModImage->InvalidateLayoutAndVolatility();
+                    if (ArmorModPreviewMID)
+                    {
+                        ArmorModPreviewMID->SetTextureParameterValue(TEXT("SlateUI"), LocalRT);
+                    }
                     
                     // Еще одно обновление через кадр для гарантии
                     if (UWorld* World = GetWorld())
                     {
                         World->GetTimerManager().SetTimerForNextTick([this, LocalRT]()
                         {
-                            if (ArmorModImage && LocalRT)
+                            if (ArmorModImage && LocalRT && ArmorModPreviewMID)
                             {
-                                FSlateBrush Brush;
-                                Brush.SetResourceObject(LocalRT);
-                                Brush.ImageSize = FVector2D(512.f, 512.f);
-                                ArmorModImage->SetBrush(Brush);
+                                ArmorModPreviewMID->SetTextureParameterValue(TEXT("SlateUI"), LocalRT);
                                 ArmorModImage->InvalidateLayoutAndVolatility();
                             }
                         });
@@ -5120,14 +5210,18 @@ void UInventoryWidget::OpenArmorModWindow(UEquippableItemData* ArmorItem)
         {
             if (Preview) Preview->Destroy();
             ArmorModPreviewActor = nullptr;
-            // Fallback: иконка предмета
-            UTexture2D* Icon = ArmorItem->Icon
-                ? ArmorItem->Icon
-                : LoadObject<UTexture2D>(nullptr, TEXT("/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture"));
-            FSlateBrush Brush;
-            Brush.SetResourceObject(Icon);
-            Brush.ImageSize = FVector2D(256.f, 256.f);
-            ArmorModImage->SetBrush(Brush);
+            ArmorModPreviewMID = nullptr;
+            if (ArmorModImage)
+            {
+                ArmorModImage->SetVisibility(ESlateVisibility::Visible);
+                UTexture2D* Icon = ArmorItem->Icon
+                    ? ArmorItem->Icon
+                    : LoadObject<UTexture2D>(nullptr, TEXT("/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture"));
+                FSlateBrush Brush;
+                Brush.SetResourceObject(Icon);
+                Brush.ImageSize = FVector2D(256.f, 256.f);
+                ArmorModImage->SetBrush(Brush);
+            }
         }
     }
 }
@@ -5141,6 +5235,8 @@ void UInventoryWidget::CloseArmorModWindow()
     bDraggingArmorModWindow = false;
     bResizingArmorModWindow = false;
     bRotatingArmorPreview = false;
+    bPanningArmorPreview = false;
+    bArmorPreviewRmbClickCandidate = false;
 
     if (ArmorModPreviewActor)
     {
@@ -5148,6 +5244,7 @@ void UInventoryWidget::CloseArmorModWindow()
         ArmorModPreviewActor = nullptr;
     }
     ArmorModRenderTarget = nullptr;
+    ArmorModPreviewMID = nullptr;
 
     if (ArmorModWindowBorder)
     {

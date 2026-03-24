@@ -145,7 +145,7 @@ void UInventoryItemWidget::Init(UInventoryItemData* InData, UTexture2D* InIcon, 
 void UInventoryItemWidget::NativeConstruct()
 {
     Super::NativeConstruct();
-    bIsFocusable = true; // позволяем ловить R на виджете предмета
+    SetIsFocusable(true); // позволяем ловить R на виджете предмета
     SetVisibility(ESlateVisibility::Visible);
     SetIsEnabled(true);
 }
@@ -201,6 +201,7 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
                                 const bool bSupportedUnequip =
                                     (EquippableItem->EquipmentSlot == Helmet) ||
                                     (EquippableItem->EquipmentSlot == Vest) ||
+                                    (EquippableItem->EquipmentSlot == Belt) ||
                                     (EquippableItem->EquipmentSlot == Backpack) ||
                                     (EquippableItem->EquipmentSlot == Armor);
                                 UnequipBtn->SetIsEnabled(bSupportedUnequip);
@@ -264,10 +265,10 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
                     }
                 }
 
-                // Кнопка "Модифицировать" для модифицируемых бронежилетов (любых ItemData с EquipmentSlot==Armor)
+                // Кнопка "Модифицировать" для любого модифицируемого элемента экипировки.
                 if (UEquippableItemData* EqArmor = Cast<UEquippableItemData>(ItemData))
                 {
-                    if (EqArmor->EquipmentSlot == Armor && EqArmor->bIsModdable)
+                    if (EqArmor->bIsModdable)
                     {
                         UButton* ModifyBtn = Parent->WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
                         UTextBlock* ModifyTxt = Parent->WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
@@ -566,7 +567,7 @@ void UInventoryItemWidget::OnModifyArmorClicked()
     {
         if (UEquippableItemData* ArmorData = Cast<UEquippableItemData>(ItemData))
         {
-            if (ArmorData->EquipmentSlot == Armor && ArmorData->bIsModdable)
+            if (ArmorData->bIsModdable)
             {
                 Parent->OpenArmorModWindow(ArmorData);
             }

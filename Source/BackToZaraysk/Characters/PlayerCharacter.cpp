@@ -290,10 +290,15 @@ void APlayerCharacter::Tick(float DeltaTime)
 			UWaterSubsystem::GetWaterBodyManager(World)->ForEachWaterBodyComponent([&](UWaterBodyComponent* Comp)
 			{
 				if (!Comp) return true;
-				const FWaterBodyQueryResult R = Comp->QueryWaterInfoClosestToWorldLocation(
+				const auto QueryResult = Comp->TryQueryWaterInfoClosestToWorldLocation(
 					QueryLoc,
 					EWaterBodyQueryFlags::ComputeLocation | EWaterBodyQueryFlags::ComputeImmersionDepth | EWaterBodyQueryFlags::IncludeWaves
 				);
+				if (!QueryResult.HasValue())
+				{
+					return true;
+				}
+				const FWaterBodyQueryResult& R = QueryResult.GetValue();
 				const float D = R.GetImmersionDepth();
 				if (D > BestImmersion)
 				{

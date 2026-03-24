@@ -4,6 +4,7 @@
 #include "BackToZaraysk/GameData/Items/Test/PickupBase.h"
 #include "BackToZaraysk/GameData/Items/EquipmentBase.h"
 #include "BackToZaraysk/Inventory/InventoryBlueprintLibrary.h"
+#include "BackToZaraysk/Characters/PlayerCharacter.h"
 #include "GameFramework/Character.h"
 #include "DrawDebugHelpers.h"
 
@@ -154,7 +155,7 @@ bool UInventoryComponent::EquipItemFromInventory(UEquippableItemData* Item)
 
     // Если это рюкзак или жилет и в ItemData уже есть PersistenStorage (например, после повторного подбора), 
     // и в оперативном EquipmentStorage пусто — восстановим его перед экипировкой
-    if (Item->EquipmentSlot == Backpack || Item->EquipmentSlot == Vest)
+    if (Item->EquipmentSlot == Backpack || Item->EquipmentSlot == Vest || Item->EquipmentSlot == Belt)
     {
         TArray<TObjectPtr<UInventoryItemData>>& StorageItems = EquipmentStorage.FindOrAdd(Item);
         if (StorageItems.Num() == 0 && Item->PersistentStorage.Num() > 0)
@@ -283,7 +284,7 @@ bool UInventoryComponent::UnequipItemToInventory(EEquipmentSlotType SlotType, bo
     }
 
     // Перед снятием: если это рюкзак или жилет, и мы выбрасываем в мир — переносим содержимое в PersistentStorage
-    if ((SlotType == Backpack || SlotType == Vest) && bDropToWorld)
+    if ((SlotType == Backpack || SlotType == Vest || SlotType == Belt) && bDropToWorld)
     {
         if (UEquippableItemData* EquipItem = Item)
         {
@@ -740,7 +741,7 @@ bool UInventoryComponent::UnequipItemToInventory(EEquipmentSlotType SlotType, bo
 		EquipmentSlots.Remove(SlotType);
 		
         // Если выбросили рюкзак/жилет — очищаем оперативное хранилище, но оставляем PersistentStorage внутри ItemData
-        if ((SlotType == Backpack || SlotType == Vest) && bDropToWorld)
+        if ((SlotType == Backpack || SlotType == Vest || SlotType == Belt) && bDropToWorld)
         {
             EquipmentStorage.Remove(Item);
         }
