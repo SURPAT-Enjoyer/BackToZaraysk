@@ -1,0 +1,24 @@
+# Unreal Engine / Visual Studio
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+.vs/
+
+# UE build artifacts
+*.log
+*.tmp
+*.pdb
+*.obj
+*.pch
+*.ipch
+*.suo
+*.user
+*.userprefs
+*.sdf
+*.opensdf
+.DS_Store
+
+# Rider
+.idea/
+
